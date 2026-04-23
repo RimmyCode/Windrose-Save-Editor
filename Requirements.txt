@@ -1,0 +1,22 @@
+# Windrose Save Editor — Requirements
+# =====================================
+# Install Python 3.10+ from https://python.org
+# Then run:  pip install -r requirements.txt
+
+# OPTIONAL
+psutil          # for detecting and killing game processes
+
+# Borderline Required (speeds up CRC computation, not required i think lol)
+crcmod          # faster CRC32C checksums — falls back to pure Python if missing
+
+# NOT required — the editor uses rocksdb.dll directly via ctypes
+# Do NOT pip install rocksdb, python-rocksdb, or plyvel
+
+# =====================================
+# Files needed to run the editor:
+# =====================================
+#   windrose_save_editor.py   — the main editor script
+#   rocksdb.dll (INCLUDED)              — from NuGet: https://www.nuget.org/packages/RocksDB
+#                               open .nupkg with 7-zip
+#                               grab: runtimes/win-x64/native/rocksdb.dll
+#
