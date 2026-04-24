@@ -22,7 +22,7 @@ from pathlib import Path
 from datetime import datetime
 
 # Game process names to look for (add more if needed)
-GAME_PROCESS_NAMES = ['R5.exe', 'Windrose.exe', 'R5-Win64-Shipping.exe']
+GAME_PROCESS_NAMES = ['R5.exe', 'Windrose.exe', 'R5-Win64-Shipping.exe', 'Windrose-Win64-Shipping.exe']
 
 # CRC32C (Castagnoli) — pure Python, no external dependency.
 # crcmod/binascii use CRC32-IEEE which produces wrong checksums for RocksDB.
