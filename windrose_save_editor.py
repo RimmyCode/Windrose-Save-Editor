@@ -17,7 +17,7 @@ Typically: %LOCALAPPDATA%\\R5\\Saved\\SaveProfiles\\<character_folder>
 ALWAYS back up your save folder before editing!
 """
 
-import struct, sys, os, shutil, uuid, json, copy
+import struct, sys, os, shutil, uuid, json, copy, time, threading
 from pathlib import Path
 from datetime import datetime
 
