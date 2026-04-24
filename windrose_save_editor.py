@@ -303,7 +303,6 @@ def scan_sst_for_player(save_dir: Path) -> tuple[bytes, bytes] | None:
             available_drives = [d.rstrip(':\\') for d in os.listdrives()]
         else:
             # Fallback for older Python versions
-            import ctypes
             bitmask = ctypes.windll.kernel32.GetLogicalDrives()
             available_drives = [chr(ord('A') + i) for i in range(26) if bitmask & (1 << i)]
 
