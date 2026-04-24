@@ -22,7 +22,7 @@ from pathlib import Path
 from datetime import datetime
 
 # Game process names to look for (add more if needed)
-GAME_PROCESS_NAMES = ['R5.exe', 'Windrose.exe', 'R5-Win64-Shipping.exe']
+GAME_PROCESS_NAMES = ['R5.exe', 'Windrose.exe', 'R5-Win64-Shipping.exe', 'Windrose-Win64-Shipping.exe']
 
 # CRC32C (Castagnoli) — pure Python, no external dependency.
 # crcmod/binascii use CRC32-IEEE which produces wrong checksums for RocksDB.
@@ -1032,11 +1032,17 @@ def kill_game() -> bool:
         return False
 
     killed = []
-    for proc in psutil.process_iter(['name', 'pid']):
+    for proc in psutil.process_iter(['name', 'pid', 'cmdline']):
         try:
-            if proc.info['name'] in GAME_PROCESS_NAMES:
+            should_kill = proc.info['name'] in GAME_PROCESS_NAMES
+            if not should_kill and sys.platform != 'win32' and proc.info['cmdline']:
+                cmdline = ' '.join(proc.info['cmdline'])
+                if any(name in cmdline for name in GAME_PROCESS_NAMES):
+                    should_kill = True
+            
+            if should_kill:
                 proc.kill()
-                killed.append(proc.info['name'])
+                killed.append(proc.info['name'] or "Game Process")
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             pass
 
@@ -1224,10 +1230,16 @@ def _wait_for_game_exit():
 
     # Check if any game process is still running
     def game_running():
-        for p in psutil.process_iter(['name']):
+        for p in psutil.process_iter(['name', 'cmdline']):
             try:
+                # Check process name
                 if p.info['name'] in GAME_PROCESS_NAMES:
                     return True
+                # On Linux/Proton, the name might be 'wine64-preloader' but cmdline has the .exe
+                if sys.platform != 'win32' and p.info['cmdline']:
+                    cmdline = ' '.join(p.info['cmdline'])
+                    if any(name in cmdline for name in GAME_PROCESS_NAMES):
+                        return True
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 pass
         return False
