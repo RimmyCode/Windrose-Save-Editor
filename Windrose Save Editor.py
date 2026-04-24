@@ -820,8 +820,14 @@ def edit_stats(doc: dict) -> bool:
     try:
         new_lvl = int(input(f"  New level for {real_name} (current: {level}, max: {max_lvl}): "))
         new_lvl = max(0, min(new_lvl, max_lvl))
-        v['NodeLevel'] = new_lvl              # write back to node, not NodeData
+        v['NodeLevel'] = new_lvl
+        # Recalculate ProgressionPoints = sum of all node levels
+        st['ProgressionPoints'] = sum(
+            node.get('NodeLevel', 0) for node in nodes.values()
+            if isinstance(node, dict)
+        )
         print(f"  ✓ {real_name} → {new_lvl}/{max_lvl}")
+        print(f"  ✓ ProgressionPoints updated → {st['ProgressionPoints']}")
         return True
     except ValueError:
         print("  Invalid level.")
@@ -905,15 +911,66 @@ def edit_skills(doc: dict) -> bool:
             try:
                 new_lvl = int(input(f"  New level for {real_name} (current: {level}, max: {max_lvl}): "))
                 new_lvl = max(0, min(new_lvl, max_lvl))
-                v['NodeLevel'] = new_lvl   # NodeLevel lives on the node
+                v['NodeLevel'] = new_lvl
+                # Recalculate ProgressionPoints = sum of all node levels
+                tt['ProgressionPoints'] = sum(
+                    node.get('NodeLevel', 0) for node in nodes.values()
+                    if isinstance(node, dict)
+                )
                 # Update local cache
                 cat_nodes[si] = (k, v, nd, real_name, talent_key, new_lvl, max_lvl)
                 print(f"  ✓ {real_name} → {new_lvl}/{max_lvl}")
-                return True  # signal modified
+                print(f"  ✓ ProgressionPoints updated → {tt['ProgressionPoints']}")
+                return True
             except ValueError:
                 print("  Invalid level.")
 
     return False
+
+
+
+# ── Item type detection ────────────────────────────────────────────────────
+WEAPON_PREFIXES = ('DA_EID_MeleeWeapon_', 'DA_EID_RangeWeapon_', 'DA_EID_Weapon_')
+ARMOR_PREFIXES  = ('DA_EID_Armor_', 'DA_EID_Helmet_', 'DA_EID_Gloves_',
+                   'DA_EID_Boots_', 'DA_EID_Legs_', 'DA_EID_Chest_')
+EQUIP_PREFIXES  = WEAPON_PREFIXES + ARMOR_PREFIXES
+
+def is_equipment(item_params: str) -> bool:
+    """Return True if the ItemParams path is a weapon or armor."""
+    name = item_params.split('/')[-1].split('.')[0]
+    return any(name.startswith(p) for p in EQUIP_PREFIXES)
+
+def ensure_equipment_integrity(item: dict, stack: dict, item_params: str):
+    """
+    For weapons and armor:
+    - Force Count = 1 (stacking corrupts the save)
+    - Force Level >= 1 (level 0 equipment corrupts the save)
+    - Add level attribute if missing
+    """
+    if not is_equipment(item_params):
+        return
+
+    # Force count to 1
+    stack['Count'] = 1
+
+    attrs = item.get('Attributes', {})
+    level_attr = None
+    for a in attrs.values():
+        if isinstance(a, dict) and 'Level' in a.get('Tag', {}).get('TagName', ''):
+            level_attr = a
+            break
+
+    if level_attr is None:
+        # Add the level attribute if completely missing
+        item.setdefault('Attributes', {})['0'] = {
+            'MaxValue': 15,
+            'Tag': {'TagName': 'Inventory.Item.Attribute.Level'},
+            'Value': 1
+        }
+        print("  [Auto] Added missing level attribute (set to 1)")
+    elif level_attr.get('Value', 0) < 1:
+        level_attr['Value'] = 1
+        print("  [Auto] Level was 0 — set to 1 (minimum for equipment)")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1359,8 +1416,6 @@ def main():
         print(f"  2. Set Item Level")
         print(f"  3. Set Item Count")
         print(f"  4. Replace Item")
-        print(f"  5. Stat Editor")
-        print(f"  6. Skill Editor")
         print(f"  7. Export full save as JSON")
         print(f"  8. Force-close game")
         print(f"  9. Save changes")
@@ -1463,6 +1518,9 @@ def main():
                 except ValueError:
                     pass
 
+            # Enforce weapon/armor integrity rules
+            ensure_equipment_integrity(it['item_ref'], it['stack_ref'], new_params)
+
             new_name = new_params.split('/')[-1].split('.')[0]
             print(f"  ✓ Replaced with: {new_name}")
             modified = True
@@ -1470,14 +1528,20 @@ def main():
 
         elif choice == 'dev':
             print("\n  ⚠  EXPERIMENTAL — Use at your own risk")
-            print("  1. Add item to inventory")
-            print("  2. Remove item from inventory")
+            print("  1. Stat Editor")
+            print("  2. Skill Editor")
+            print("  3. Add item to inventory")
+            print("  4. Remove item from inventory")
             print("  B. Back")
             print()
             dev_choice = input("  Choice: ").strip().lower()
             if dev_choice == '1':
-                choice = '_add'
+                choice = '_stats'
             elif dev_choice == '2':
+                choice = '_skills'
+            elif dev_choice == '3':
+                choice = '_add'
+            elif dev_choice == '4':
                 choice = '_remove'
             else:
                 input("  Press Enter…"); continue
@@ -1599,12 +1663,12 @@ def main():
             input('  Press Enter...')
 
 
-        elif choice == '5':
+        elif choice == '_stats':
             if edit_stats(doc):
                 modified = True
             input('  Press Enter...')
 
-        elif choice == '6':
+        elif choice == '_skills':
             if edit_skills(doc):
                 modified = True
 
