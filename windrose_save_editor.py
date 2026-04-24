@@ -1232,13 +1232,13 @@ def _wait_for_game_exit():
     def game_running():
         for p in psutil.process_iter(['name', 'cmdline']):
             try:
-                # Check process name
-                if p.info['name'] in GAME_PROCESS_NAMES:
+                # Case-insensitive check for process name
+                if p.info['name'] and any(name.lower() == p.info['name'].lower() for name in GAME_PROCESS_NAMES):
                     return True
-                # On Linux/Proton, the name might be 'wine64-preloader' but cmdline has the .exe
+                # On Linux/Proton, check cmdline (case-insensitive)
                 if sys.platform != 'win32' and p.info['cmdline']:
-                    cmdline = ' '.join(p.info['cmdline'])
-                    if any(name in cmdline for name in GAME_PROCESS_NAMES):
+                    cmdline = ' '.join(p.info['cmdline']).lower()
+                    if any(name.lower() in cmdline for name in GAME_PROCESS_NAMES):
                         return True
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 pass
@@ -1362,9 +1362,10 @@ def main():
     save_dir = resolve_save_dir(save_dir)
 
     if not (save_dir / 'CURRENT').exists():
+        ls_cmd = "dir" if sys.platform == "win32" else "ls -F"
         print(f"[ERROR] Could not find a save folder (no CURRENT file) under:")
         print(f"        {Path(sys.argv[1]).resolve()}")
-        print(f"\n  Run:  dir \"{Path(sys.argv[1]).resolve()}\"  to see what's inside.")
+        print(f"\n  Run:  {ls_cmd} \"{Path(sys.argv[1]).resolve()}\"  to see what's inside.")
         sys.exit(1)
 
     wal_path = find_wal(save_dir)
@@ -1671,3 +1672,10 @@ def main():
 
 if __name__ == '__main__':
     main()
+     break
+
+    print("\nBye!")
+
+if __name__ == '__main__':
+    main()
+main()
