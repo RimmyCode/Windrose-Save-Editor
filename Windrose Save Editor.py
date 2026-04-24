@@ -18,11 +18,20 @@ ALWAYS back up your save folder before editing!
 """
 
 import struct, sys, os, shutil, uuid, json, copy
+import ctypes
+import ctypes.util
+import threading
+import time
 from pathlib import Path
+
+try:
+    import psutil
+except ImportError:
+    psutil = None
 from datetime import datetime
 
 # Game process names to look for (add more if needed)
-GAME_PROCESS_NAMES = ['R5.exe', 'Windrose.exe', 'R5-Win64-Shipping.exe', 'Windrose-Win64-Shipping.exe']
+GAME_PROCESS_NAMES = ['R5.exe', 'Windrose.exe', 'R5-Win64-Shipping.exe']
 
 # CRC32C (Castagnoli) — pure Python, no external dependency.
 # crcmod/binascii use CRC32-IEEE which produces wrong checksums for RocksDB.
@@ -271,42 +280,63 @@ def scan_sst_for_player(save_dir: Path) -> tuple[bytes, bytes] | None:
     game uses). Falls back to None if librocksdb is not available.
     Returns (player_key_bytes, bson_bytes) or None.
     """
-    import ctypes, ctypes.util
 
     # Find librocksdb — check next to this script first, then common system names
     script_dir = Path(__file__).resolve().parent
     lib_path = None
     lib = None
 
-    # Search for the game's own rocksdb.dll first — it's guaranteed compatible
+    # Search for the game's own library first — it's guaranteed compatible
     # with the save files since the game wrote them with it.
-    game_dll_locations = []
-    for steam_base in [
-        Path(r'C:/Program Files (x86)/Steam/steamapps/common'),
-        Path(r'C:/Program Files/Steam/steamapps/common'),
-        Path(r'D:/Steam/steamapps/common'),
-        Path(r'D:/SteamLibrary/steamapps/common'),
-        Path(r'E:/Steam/steamapps/common'),
-        Path(r'E:/SteamLibrary/steamapps/common'),
-        Path(r'G:/Steam/steamapps/common'),
-        Path(r'G:/SteamLibrary/steamapps/common'),
-    ]:
+    game_lib_locations = []
+    steam_bases = []
+    if sys.platform == 'win32':
+        available_drives = []
+        if hasattr(os, 'listdrives'):
+            # Python 3.12+ - returns root paths like ['C:\\', 'D:\\']
+            available_drives = [d.rstrip(':\\') for d in os.listdrives()]
+        else:
+            # Fallback for older Python versions
+            bitmask = ctypes.windll.kernel32.GetLogicalDrives()
+            available_drives = [chr(ord('A') + i) for i in range(26) if bitmask & (1 << i)]
+
+        steam_bases = []
+        for drive in available_drives:
+            for p in [r'Program Files (x86)/Steam', r'Program Files/Steam', r'Steam', r'SteamLibrary']:
+                base = Path(f"{drive}:/") / p / 'steamapps/common'
+                if base.exists():
+                    steam_bases.append(base)
+    elif sys.platform.startswith('linux'):
+        steam_bases = [
+            Path.home() / '.local/share/Steam/steamapps/common',
+            Path.home() / '.steam/steam/steamapps/common',
+            Path.home() / '.var/app/com.valvesoftware.Steam/data/Steam/steamapps/common',
+        ]
+
+    for steam_base in steam_bases:
         for game_folder in ['Windrose', 'R5']:
-            for dll_path in (steam_base / game_folder).rglob('rocksdb.dll'):
-                game_dll_locations.append(dll_path)
+            if not (steam_base / game_folder).exists():
+                continue
+            # Look for both .dll (Windows) and .so (Linux)
+            for lib_path in (steam_base / game_folder).rglob('rocksdb.dll'):
+                game_lib_locations.append(lib_path)
+            for lib_path in (steam_base / game_folder).rglob('librocksdb.so*'):
+                game_lib_locations.append(lib_path)
 
     candidates = (
-        game_dll_locations +          # game's own DLL (best)
+        game_lib_locations +          # game's own library (best)
         [
             script_dir / 'rocksdb.dll',
             script_dir / 'librocksdb.dll',
             script_dir / 'librocksdb.so',
+            script_dir / 'librocksdb.so.8',
             Path('rocksdb.dll'),
             Path('librocksdb.dll'),
+            Path('librocksdb.so'),
         ]
     )
     # Also try system library names via find_library
-    for sys_name in ['rocksdb', 'librocksdb.so.8.9', 'librocksdb.so.8']:
+    for sys_name in ['rocksdb', 'librocksdb', 'rocksdb-jemalloc']:
         found = ctypes.util.find_library(sys_name)
         if found:
             candidates.append(Path(found))
@@ -323,10 +353,15 @@ def scan_sst_for_player(save_dir: Path) -> tuple[bytes, bytes] | None:
             continue
 
     if lib is None:
-        print("  [WARN] rocksdb.dll not found. Make sure rocksdb.dll is in the")
+        lib_name = "librocksdb.so" if sys.platform.startswith('linux') else "rocksdb.dll"
+        print(f"  [WARN] {lib_name} not found. Make sure it is in the")
         print(f"         same folder as this script: {script_dir}")
-        print("  Download from: https://www.nuget.org/packages/RocksDB")
-        print("  (open .nupkg with 7-zip, grab rocksdb.dll from runtimes/win-x64/native/)")
+        if sys.platform.startswith('linux'):
+            print("  Try: sudo apt install librocksdb-dev  (or your distro's equivalent)")
+            print("  Or extract librocksdb.so from the NuGet package (runtimes/linux-x64/native/)")
+        else:
+            print("  Download from: https://www.nuget.org/packages/RocksDB")
+            print("  (open .nupkg with 7-zip, grab rocksdb.dll from runtimes/win-x64/native/)")
         return None
 
     CF_NAMES = [b'default', b'R5LargeObjects', b'R5BLPlayer',
@@ -538,19 +573,20 @@ def blank_item(item_params_path: str, level: int = 1, max_level: int = 15) -> di
     """Create a new item entry matching the game's save format.
     Equipment gets a level attribute; consumables/stackables get empty Attributes.
     """
-    attrs = {}
+    # Attributes and Effects must be BSONArray (0x04) not plain dict (0x03)
+    attrs = BSONArray()
     if is_equipment(item_params_path):
-        attrs = {
+        attrs = BSONArray({
             '0': {
                 'MaxValue': max_level,
                 'Tag': {'TagName': 'Inventory.Item.Attribute.Level'},
                 'Value': max(1, level),
             }
-        }
+        })
     return {
         'Attributes': attrs,
-        'Effects': {},
-        'ItemId': 'DB54628677934C810C9BCDDB309F1FE4',
+        'Effects':    BSONArray(),
+        'ItemId':     'DB54628677934C810C9BCDDB309F1FE4',
         'ItemParams': item_params_path
     }
 
@@ -750,6 +786,7 @@ TALENT_NAMES = {
     "Talent_Toughguy_SaveOnLowHP": "Too Angry to Die",
     "Talent_Toughguy_StaminaBonus": "Marathon Runner",
     "Talent_Toughguy_TempHPForDamageRecivedBonus": "You Will Answer for This",
+    "Talent_Toughguy_GlobalDamageResist": "Damage Resistance",
 }
 
 TALENT_DESCS = {
@@ -794,6 +831,7 @@ TALENT_DESCS = {
     "Talent_Toughguy_SaveOnLowHP": "When receiving a killing blow, instantly restore Health. Has a cooldown.",
     "Talent_Toughguy_StaminaBonus": "Grants additional Stamina.",
     "Talent_Toughguy_TempHPForDamageRecivedBonus": "Increases Temporal Health gain when taking damage.",
+    "Talent_Toughguy_GlobalDamageResist": "Increases overall Damage Resistance.",
 }
 
 SKILL_CATEGORIES = {
@@ -875,6 +913,106 @@ def edit_stats(doc: dict) -> bool:
         input("  Press Enter..."); return False, None
 
 
+
+# ── Complete talent definitions — sourced directly from DA_HeroTalentTree.json
+# Path format confirmed: /R5BusinessRules/EntityProgression/Talents/<Category>/DA_Talent_<Category>_<Skill>
+# 37 total nodes across 4 categories
+ALL_TALENTS = {
+    "Fencer": [
+        "ConsecutiveMeleeHitsBonus",
+        "CritChanceForPerfectBlock",
+        "DamageForSoloEnemy",
+        "HealForKill",
+        "LessStaminaForDash",
+        "OneHandedDamage",
+        "OneHandedMeleeCritChance",
+        "PassiveReloadBoostForPerfectBlock",
+        "PassiveReloadBoostForPerfectDodge",
+        "SlashDamage",
+    ],
+    "Crusher": [
+        "Berserk",
+        "CrudeDamage",
+        "DamageForDeathNearby",
+        "DamageForMultipleTargets",
+        "TemporalHPHealBuff",
+        "TwoHandedDamage",
+        "TwoHandedMeleeCritChance",
+        "TwoHandedStaminaReduced",
+    ],
+    "Marksman": [
+        "ActiveReloadSpeedBonus",
+        "ConsecutiveRangeHitsBonus",
+        "DamageForAimingState",
+        "DamageForDistance",
+        "DamageForPointBlank",
+        "Overpenetration",
+        "PassiveReloadBonus",
+        "PierceDamage",
+        "RangeCritDamageBonus",
+        "RangeDamageBonus",
+        "ReloadForKill",
+    ],
+    "Toughguy": [
+        "BlockPostureConsumptionBonus",
+        "DamageForManyEnemies",
+        "ExtraHP",
+        "GlobalDamageResist",
+        "HealEffectiveness",
+        "SaveOnLowHP",
+        "StaminaBonus",
+        "TempHPForDamageRecivedBonus",
+    ],
+}
+
+# Complete node metadata sourced from DA_HeroTalentTree.json
+# Keyed by DA asset name: path, UISlotTag, NodePointsCost, Requirements
+TALENT_NODE_DATA = {
+    "DA_Talent_Crusher_Berserk":                     {"path": "/R5BusinessRules/EntityProgression/Talents/Crusher/DA_Talent_Crusher_Berserk.DA_Talent_Crusher_Berserk", "UISlotTag": "UI.EntityProgression.TalentTree.Slot.2.3.1"},
+    "DA_Talent_Crusher_CrudeDamage":                  {"path": "/R5BusinessRules/EntityProgression/Talents/Crusher/DA_Talent_Crusher_CrudeDamage.DA_Talent_Crusher_CrudeDamage", "UISlotTag": "UI.EntityProgression.TalentTree.Slot.2.1.2"},
+    "DA_Talent_Crusher_DamageForDeathNearby":         {"path": "/R5BusinessRules/EntityProgression/Talents/Crusher/DA_Talent_Crusher_DamageForDeathNearby.DA_Talent_Crusher_DamageForDeathNearby", "UISlotTag": "UI.EntityProgression.TalentTree.Slot.2.3.2"},
+    "DA_Talent_Crusher_DamageForMultipleTargets":     {"path": "/R5BusinessRules/EntityProgression/Talents/Crusher/DA_Talent_Crusher_DamageForMultipleTargets.DA_Talent_Crusher_DamageForMultipleTargets", "UISlotTag": "UI.EntityProgression.TalentTree.Slot.2.3.3"},
+    "DA_Talent_Crusher_TemporalHPHealBuff":           {"path": "/R5BusinessRules/EntityProgression/Talents/Crusher/DA_Talent_Crusher_TemporalHPHealBuff.DA_Talent_Crusher_TemporalHPHealBuff", "UISlotTag": "UI.EntityProgression.TalentTree.Slot.2.1.3"},
+    "DA_Talent_Crusher_TwoHandedDamage":              {"path": "/R5BusinessRules/EntityProgression/Talents/Crusher/DA_Talent_Crusher_TwoHandedDamage.DA_Talent_Crusher_TwoHandedDamage", "UISlotTag": "UI.EntityProgression.TalentTree.Slot.2.2.1"},
+    "DA_Talent_Crusher_TwoHandedMeleeCritChance":     {"path": "/R5BusinessRules/EntityProgression/Talents/Crusher/DA_Talent_Crusher_TwoHandedMeleeCritChance.DA_Talent_Crusher_TwoHandedMeleeCritChance", "UISlotTag": "UI.EntityProgression.TalentTree.Slot.2.2.3"},
+    "DA_Talent_Crusher_TwoHandedStaminaReduced":      {"path": "/R5BusinessRules/EntityProgression/Talents/Crusher/DA_Talent_Crusher_TwoHandedStaminaReduced.DA_Talent_Crusher_TwoHandedStaminaReduced", "UISlotTag": "UI.EntityProgression.TalentTree.Slot.2.2.2"},
+    "DA_Talent_Fencer_ConsecutiveMeleeHitsBonus":     {"path": "/R5BusinessRules/EntityProgression/Talents/Fencer/DA_Talent_Fencer_ConsecutiveMeleeHitsBonus.DA_Talent_Fencer_ConsecutiveMeleeHitsBonus", "UISlotTag": "UI.EntityProgression.TalentTree.Slot.1.3.4"},
+    "DA_Talent_Fencer_CritChanceForPerfectBlock":     {"path": "/R5BusinessRules/EntityProgression/Talents/Fencer/DA_Talent_Fencer_CritChanceForPerfectBlock.DA_Talent_Fencer_CritChanceForPerfectBlock", "UISlotTag": "UI.EntityProgression.TalentTree.Slot.1.2.2"},
+    "DA_Talent_Fencer_DamageForSoloEnemy":            {"path": "/R5BusinessRules/EntityProgression/Talents/Fencer/DA_Talent_Fencer_DamageForSoloEnemy.DA_Talent_Fencer_DamageForSoloEnemy", "UISlotTag": "UI.EntityProgression.TalentTree.Slot.1.2.3"},
+    "DA_Talent_Fencer_HealForKill":                   {"path": "/R5BusinessRules/EntityProgression/Talents/Fencer/DA_Talent_Fencer_HealForKill.DA_Talent_Fencer_HealForKill", "UISlotTag": "UI.EntityProgression.TalentTree.Slot.1.3.2"},
+    "DA_Talent_Fencer_LessStaminaForDash":            {"path": "/R5BusinessRules/EntityProgression/Talents/Fencer/DA_Talent_Fencer_LessStaminaForDash.DA_Talent_Fencer_LessStaminaForDash", "UISlotTag": "UI.EntityProgression.TalentTree.Slot.1.1.2"},
+    "DA_Talent_Fencer_OneHandedDamage":               {"path": "/R5BusinessRules/EntityProgression/Talents/Fencer/DA_Talent_Fencer_OneHandedDamage.DA_Talent_Fencer_OneHandedDamage", "UISlotTag": "UI.EntityProgression.TalentTree.Slot.1.2.1"},
+    "DA_Talent_Fencer_OneHandedMeleeCritChance":      {"path": "/R5BusinessRules/EntityProgression/Talents/Fencer/DA_Talent_Fencer_OneHandedMeleeCritChance.DA_Talent_Fencer_OneHandedMeleeCritChance", "UISlotTag": "UI.EntityProgression.TalentTree.Slot.1.1.3"},
+    "DA_Talent_Fencer_PassiveReloadBoostForPerfectBlock": {"path": "/R5BusinessRules/EntityProgression/Talents/Fencer/DA_Talent_Fencer_PassiveReloadBoostForPerfectBlock.DA_Talent_Fencer_PassiveReloadBoostForPerfectBlock", "UISlotTag": "UI.EntityProgression.TalentTree.Slot.1.3.3"},
+    "DA_Talent_Fencer_PassiveReloadBoostForPerfectDodge": {"path": "/R5BusinessRules/EntityProgression/Talents/Fencer/DA_Talent_Fencer_PassiveReloadBoostForPerfectDodge.DA_Talent_Fencer_PassiveReloadBoostForPerfectDodge", "UISlotTag": "UI.EntityProgression.TalentTree.Slot.1.3.3"},
+    "DA_Talent_Fencer_SlashDamage":                   {"path": "/R5BusinessRules/EntityProgression/Talents/Fencer/DA_Talent_Fencer_SlashDamage.DA_Talent_Fencer_SlashDamage", "UISlotTag": "UI.EntityProgression.TalentTree.Slot.1.1.1"},
+    "DA_Talent_Marksman_ActiveReloadSpeedBonus":      {"path": "/R5BusinessRules/EntityProgression/Talents/Marksman/DA_Talent_Marksman_ActiveReloadSpeedBonus.DA_Talent_Marksman_ActiveReloadSpeedBonus", "UISlotTag": "UI.EntityProgression.TalentTree.Slot.3.2.2"},
+    "DA_Talent_Marksman_ConsecutiveRangeHitsBonus":   {"path": "/R5BusinessRules/EntityProgression/Talents/Marksman/DA_Talent_Marksman_ConsecutiveRangeHitsBonus.DA_Talent_Marksman_ConsecutiveRangeHitsBonus", "UISlotTag": "UI.EntityProgression.TalentTree.Slot.3.3.1"},
+    "DA_Talent_Marksman_DamageForAimingState":        {"path": "/R5BusinessRules/EntityProgression/Talents/Marksman/DA_Talent_Marksman_DamageForAimingState.DA_Talent_Marksman_DamageForAimingState", "UISlotTag": "UI.EntityProgression.TalentTree.Slot.3.3.2"},
+    "DA_Talent_Marksman_DamageForDistance":           {"path": "/R5BusinessRules/EntityProgression/Talents/Marksman/DA_Talent_Marksman_DamageForDistance.DA_Talent_Marksman_DamageForDistance", "UISlotTag": "UI.EntityProgression.TalentTree.Slot.3.2.3"},
+    "DA_Talent_Marksman_DamageForPointBlank":         {"path": "/R5BusinessRules/EntityProgression/Talents/Marksman/DA_Talent_Marksman_DamageForPointBlank.DA_Talent_Marksman_DamageForPointBlank", "UISlotTag": "UI.EntityProgression.TalentTree.Slot.3.2.3"},
+    "DA_Talent_Marksman_Overpenetration":             {"path": "/R5BusinessRules/EntityProgression/Talents/Marksman/DA_Talent_Marksman_Overpenetration.DA_Talent_Marksman_Overpenetration", "UISlotTag": "UI.EntityProgression.TalentTree.Slot.3.3.4"},
+    "DA_Talent_Marksman_PassiveReloadBonus":          {"path": "/R5BusinessRules/EntityProgression/Talents/Marksman/DA_Talent_Marksman_PassiveReloadBonus.DA_Talent_Marksman_PassiveReloadBonus", "UISlotTag": "UI.EntityProgression.TalentTree.Slot.3.1.1"},
+    "DA_Talent_Marksman_PierceDamage":                {"path": "/R5BusinessRules/EntityProgression/Talents/Marksman/DA_Talent_Marksman_PierceDamage.DA_Talent_Marksman_PierceDamage", "UISlotTag": "UI.EntityProgression.TalentTree.Slot.3.1.2"},
+    "DA_Talent_Marksman_RangeCritDamageBonus":        {"path": "/R5BusinessRules/EntityProgression/Talents/Marksman/DA_Talent_Marksman_RangeCritDamageBonus.DA_Talent_Marksman_RangeCritDamageBonus", "UISlotTag": "UI.EntityProgression.TalentTree.Slot.3.1.3"},
+    "DA_Talent_Marksman_RangeDamageBonus":            {"path": "/R5BusinessRules/EntityProgression/Talents/Marksman/DA_Talent_Marksman_RangeDamageBonus.DA_Talent_Marksman_RangeDamageBonus", "UISlotTag": "UI.EntityProgression.TalentTree.Slot.3.2.1"},
+    "DA_Talent_Marksman_ReloadForKill":               {"path": "/R5BusinessRules/EntityProgression/Talents/Marksman/DA_Talent_Marksman_ReloadForKill.DA_Talent_Marksman_ReloadForKill", "UISlotTag": "UI.EntityProgression.TalentTree.Slot.3.3.3"},
+    "DA_Talent_Toughguy_BlockPostureConsumptionBonus":{"path": "/R5BusinessRules/EntityProgression/Talents/Toughguy/DA_Talent_Toughguy_BlockPostureConsumptionBonus.DA_Talent_Toughguy_BlockPostureConsumptionBonus", "UISlotTag": "UI.EntityProgression.TalentTree.Slot.4.2.2"},
+    "DA_Talent_Toughguy_DamageForManyEnemies":        {"path": "/R5BusinessRules/EntityProgression/Talents/Toughguy/DA_Talent_Toughguy_DamageForManyEnemies.DA_Talent_Toughguy_DamageForManyEnemies", "UISlotTag": "UI.EntityProgression.TalentTree.Slot.4.2.3"},
+    "DA_Talent_Toughguy_ExtraHP":                     {"path": "/R5BusinessRules/EntityProgression/Talents/Toughguy/DA_Talent_Toughguy_ExtraHP.DA_Talent_Toughguy_ExtraHP", "UISlotTag": "UI.EntityProgression.TalentTree.Slot.4.3.3"},
+    "DA_Talent_Toughguy_GlobalDamageResist":          {"path": "/R5BusinessRules/EntityProgression/Talents/Toughguy/DA_Talent_Toughguy_GlobalDamageResist.DA_Talent_Toughguy_GlobalDamageResist", "UISlotTag": "UI.EntityProgression.TalentTree.Slot.4.2.1"},
+    "DA_Talent_Toughguy_HealEffectiveness":           {"path": "/R5BusinessRules/EntityProgression/Talents/Toughguy/DA_Talent_Toughguy_HealEffectiveness.DA_Talent_Toughguy_HealEffectiveness", "UISlotTag": "UI.EntityProgression.TalentTree.Slot.4.1.1"},
+    "DA_Talent_Toughguy_SaveOnLowHP":                 {"path": "/R5BusinessRules/EntityProgression/Talents/Toughguy/DA_Talent_Toughguy_SaveOnLowHP.DA_Talent_Toughguy_SaveOnLowHP", "UISlotTag": "UI.EntityProgression.TalentTree.Slot.4.3.2"},
+    "DA_Talent_Toughguy_StaminaBonus":                {"path": "/R5BusinessRules/EntityProgression/Talents/Toughguy/DA_Talent_Toughguy_StaminaBonus.DA_Talent_Toughguy_StaminaBonus", "UISlotTag": "UI.EntityProgression.TalentTree.Slot.4.1.3"},
+    "DA_Talent_Toughguy_TempHPForDamageRecivedBonus": {"path": "/R5BusinessRules/EntityProgression/Talents/Toughguy/DA_Talent_Toughguy_TempHPForDamageRecivedBonus.DA_Talent_Toughguy_TempHPForDamageRecivedBonus", "UISlotTag": "UI.EntityProgression.TalentTree.Slot.4.1.2"},
+}
+
+def talent_perk_path(category: str, skill_suffix: str) -> str:
+    """Build the full Perks asset path for a talent."""
+    da = f"DA_Talent_{category}_{skill_suffix}"
+    return TALENT_NODE_DATA.get(da, {}).get('path',
+        f"/R5BusinessRules/EntityProgression/Talents/{category}/{da}.{da}")
+
 def edit_skills(doc: dict) -> bool:
     """Skill editor — TalentTree NodeLevel (0-3), grouped by category."""
     pp = get_progression(doc)
@@ -903,21 +1041,37 @@ def edit_skills(doc: dict) -> bool:
         prefix = cat_info['prefix']
 
         # Collect nodes for this category
-        cat_nodes = []
-        for k, v in sorted(nodes.items(), key=lambda x: int(x[0])):
+        # Build node lookup from save (keyed by perk path)
+        save_node_by_perk = {}
+        for k, v in nodes.items():
             nd    = v.get('NodeData', {})
             perks = nd.get('Perks', {})
-            # Use NodeData.Perks to identify the skill — ActivePerk is empty when level=0
-            perk_path = list(perks.values())[0] if perks else ''
-            perk_asset = perk_path.split('/')[-1].split('.')[0] if perk_path else ''
-            if cat_key not in perk_asset:
-                continue
-            talent_key = da_to_talent_key(perk_path) if perk_path else ''
-            fallback   = perk_asset.replace('DA_Talent_' + cat_key + '_', '') if perk_asset else f'Node {k}'
-            real_name  = TALENT_NAMES.get(talent_key, fallback)
-            level      = v.get('NodeLevel', 0)
-            max_lvl    = nd.get('MaxNodeLevel', 3)
-            cat_nodes.append((k, v, nd, real_name, talent_key, level, max_lvl))
+            if perks:
+                perk_path = list(perks.values())[0]
+                save_node_by_perk[perk_path] = (k, v, nd)
+
+        # Iterate ALL known skills for this category — not just what's in the save
+        cat_nodes = []
+        for skill_suffix in ALL_TALENTS.get(cat_key, []):
+            perk_path  = talent_perk_path(cat_key, skill_suffix)
+            talent_key = f"Talent_{cat_key}_{skill_suffix}"
+            real_name  = TALENT_NAMES.get(talent_key, skill_suffix)
+
+            if perk_path in save_node_by_perk:
+                # Node exists in save — use real data
+                k, v, nd = save_node_by_perk[perk_path]
+                level   = v.get('NodeLevel', 0)
+                max_lvl = nd.get('MaxNodeLevel', 3)
+            else:
+                # Node not yet in save — create a virtual entry at level 0
+                # Will be inserted into the save when the user sets a level > 0
+                k   = None
+                v   = None
+                nd  = {}
+                level   = 0
+                max_lvl = 3
+
+            cat_nodes.append((k, v, nd, real_name, talent_key, perk_path, level, max_lvl))
 
         if not cat_nodes:
             print(f"  No {cat_key} skills found (may not be unlocked yet).")
@@ -928,7 +1082,7 @@ def edit_skills(doc: dict) -> bool:
             print(f"\n  {cat_info['label']} Skills")
             print(f"  {'#':<4} {'Name':<30} {'Level'}")
             print("  " + "─" * 45)
-            for i, (k, v, nd, real_name, talent_key, level, max_lvl) in enumerate(cat_nodes):
+            for i, (k, v, nd, real_name, talent_key, perk_path, level, max_lvl) in enumerate(cat_nodes, 1):
                 print(f"  {i:<4} {real_name:<30} {level}/{max_lvl}")
                 if show_descs and talent_key in TALENT_DESCS:
                     print(f"       {TALENT_DESCS[talent_key]}")
@@ -944,22 +1098,58 @@ def edit_skills(doc: dict) -> bool:
                 show_descs = not show_descs
                 continue
             try:
-                si = int(skill_choice)
-                k, v, nd, real_name, talent_key, level, max_lvl = cat_nodes[si]
+                si = int(skill_choice) - 1
+                k, v, nd, real_name, talent_key, perk_path, level, max_lvl = cat_nodes[si]
             except (ValueError, IndexError):
                 print("  Invalid choice."); continue
 
             try:
                 new_lvl = int(input(f"  New level for {real_name} (current: {level}, max: {max_lvl}): "))
                 new_lvl = max(0, min(new_lvl, max_lvl))
-                v['NodeLevel'] = new_lvl
+                if v is None:
+                    # Skill not yet in save — create a full node matching game structure
+                    new_k  = str(max((int(x) for x in nodes.keys()), default=-1) + 1)
+                    suffix = talent_key.replace(f"Talent_{cat_key}_", "", 1)
+                    da     = f"DA_Talent_{cat_key}_{suffix}"
+                    meta   = TALENT_NODE_DATA.get(da, {})
+                    ui_tag = meta.get('UISlotTag', '')
+                    # NodeKey tag format: Talent.Tree.<Category>.<SkillSuffix>
+                    node_key_tag = f"Talent.Tree.{cat_key}.{suffix}"
+                    # Perks, RequiredPointsByNodeTag must be BSONArray (0x04)
+                    # not plain dict (0x03) — game rejects wrong BSON type
+                    perks_arr = BSONArray({'0': perk_path})
+                    reqs_arr  = BSONArray({})
+                    new_node = {
+                        'ActivePerk': perk_path if new_lvl > 0 else '',
+                        'NodeData': {
+                            'MaxNodeLevel': max_lvl,
+                            'NodePointsCost': 1,
+                            'Perks': perks_arr,
+                            'Requirements': {
+                                'RequiredPointsByNodeTag': reqs_arr,
+                                'SearchPolicy': 'All',
+                            },
+                            'UISlotTag': {'TagName': ui_tag},
+                        },
+                        'NodeKey': {'TagName': node_key_tag},
+                        'NodeLevel': new_lvl,
+                    }
+                    nodes[new_k] = new_node
+                    v  = new_node
+                    nd = new_node['NodeData']
+                    k  = new_k
+                    print(f"  [Auto] Created new node {new_k} for {real_name}")
+                else:
+                    v['ActivePerk'] = perk_path if new_lvl > 0 else ''
+                    v['NodeLevel']  = new_lvl
+
                 # Recalculate ProgressionPoints = sum of all node levels
                 tt['ProgressionPoints'] = sum(
                     node.get('NodeLevel', 0) for node in nodes.values()
                     if isinstance(node, dict)
                 )
                 # Update local cache
-                cat_nodes[si] = (k, v, nd, real_name, talent_key, new_lvl, max_lvl)
+                cat_nodes[si] = (k, v, nd, real_name, talent_key, perk_path, new_lvl, max_lvl)
                 print(f"  ✓ {real_name} → {new_lvl}/{max_lvl}")
                 print(f"  ✓ ProgressionPoints updated → {tt['ProgressionPoints']}")
                 return True, f"Skill: {real_name} {level} -> {new_lvl}"
@@ -1103,14 +1293,20 @@ def kill_game() -> bool:
     except ImportError:
         print("  [INFO] psutil not installed — can't auto-close game.")
         print("         Run:  pip install psutil  to enable this feature.")
-        return False, None
+        return False
 
     killed = []
-    for proc in psutil.process_iter(['name', 'pid']):
+    for proc in psutil.process_iter(['name', 'pid', 'cmdline']):
         try:
-            if proc.info['name'] in GAME_PROCESS_NAMES:
+            should_kill = proc.info['name'] in GAME_PROCESS_NAMES
+            if not should_kill and sys.platform != 'win32' and proc.info['cmdline']:
+                cmdline = ' '.join(proc.info['cmdline'])
+                if any(name in cmdline for name in GAME_PROCESS_NAMES):
+                    should_kill = True
+            
+            if should_kill:
                 proc.kill()
-                killed.append(proc.info['name'])
+                killed.append(proc.info['name'] or "Game Process")
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             pass
 
@@ -1123,7 +1319,7 @@ def kill_game() -> bool:
         return True
     else:
         print("  Game doesn't appear to be running.")
-        return False, None
+        return False
 
 
 def find_save_root(save_dir: Path) -> Path:
@@ -1298,10 +1494,16 @@ def _wait_for_game_exit():
 
     # Check if any game process is still running
     def game_running():
-        for p in psutil.process_iter(['name']):
+        for p in psutil.process_iter(['name', 'cmdline']):
             try:
-                if p.info['name'] in GAME_PROCESS_NAMES:
+                # Case-insensitive check for process name
+                if p.info['name'] and any(name.lower() == p.info['name'].lower() for name in GAME_PROCESS_NAMES):
                     return True
+                # On Linux/Proton, check cmdline (case-insensitive)
+                if sys.platform != 'win32' and p.info['cmdline']:
+                    cmdline = ' '.join(p.info['cmdline']).lower()
+                    if any(name.lower() in cmdline for name in GAME_PROCESS_NAMES):
+                        return True
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 pass
         return False
@@ -1319,16 +1521,27 @@ def _wait_for_game_exit():
     print("  Waiting for game to close… (press S to skip if already closed)")
     print("  ", end='', flush=True)
 
-    import time, threading, sys, msvcrt
-
     skip = threading.Event()
     def watch_key():
-        while not skip.is_set():
-            if msvcrt.kbhit():
-                ch = msvcrt.getch().lower()
-                if ch == b's':
-                    skip.set()
-            time.sleep(0.05)
+        if sys.platform == 'win32':
+            import msvcrt
+            while not skip.is_set():
+                if msvcrt.kbhit():
+                    if msvcrt.getch().lower() == b's':
+                        skip.set()
+                time.sleep(0.05)
+        else:
+            import select, termios, tty
+            fd = sys.stdin.fileno()
+            old_settings = termios.tcgetattr(fd)
+            try:
+                tty.setcbreak(fd)
+                while not skip.is_set():
+                    if select.select([sys.stdin], [], [], 0.05)[0]:
+                        if sys.stdin.read(1).lower() == 's':
+                            skip.set()
+            finally:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
     watcher = threading.Thread(target=watch_key, daemon=True)
     watcher.start()
@@ -1427,12 +1640,34 @@ def pick_save_interactively() -> Path | None:
     """
     import os
 
-    local_app = Path(os.environ.get('LOCALAPPDATA', ''))
-    profiles_root = local_app / 'R5' / 'Saved' / 'SaveProfiles'
+    # Locate save profiles folder — differs by platform
+    profiles_root = None
 
-    if not profiles_root.exists():
-        print(f"[ERROR] Could not find save profiles at: {profiles_root}")
-        print("  Run with a path argument: python windrose_save_editor.py <path>")
+    if sys.platform == 'win32':
+        local_app = Path(os.environ.get('LOCALAPPDATA', ''))
+        profiles_root = local_app / 'R5' / 'Saved' / 'SaveProfiles'
+    else:
+        # Linux / Proton — Windrose App ID 3041230 (via PCGamingWiki)
+        home = Path.home()
+        APP_ID = '3041230'
+        steam_bases = [
+            # Native Steam
+            home / '.local/share/Steam/steamapps/compatdata',
+            home / '.steam/steam/steamapps/compatdata',
+            # Flatpak Steam
+            home / '.var/app/com.valvesoftware.Steam/data/Steam/steamapps/compatdata',
+        ]
+        save_suffix = Path('pfx/drive_c/users/steamuser/AppData/Local/R5/Saved/SaveProfiles')
+        for base in steam_bases:
+            candidate = base / APP_ID / save_suffix
+            if candidate.exists():
+                profiles_root = candidate
+                break
+
+    if not profiles_root or not profiles_root.exists():
+        print(f"[ERROR] Could not find save profiles folder automatically.")
+        print("  Run with a path argument:")
+        print("    python windrose_save_editor.py <path to Players/GUID folder>")
         return None
 
     # Find all Steam ID folders (numeric names, not backups)
@@ -1785,11 +2020,13 @@ def main():
             # Register in WasTouchedItems so the game recognises the item instance
             inv_meta = doc.setdefault('PlayerMetadata', {}).setdefault('InventoryMetadata', {})
             touched  = inv_meta.setdefault('WasTouchedItems', {})
-            next_key = str(max((int(k) for k in touched.keys()), default=-1) + 1)
+            # Find a truly unused key (max existing + 1)
+            existing_keys = [int(k) for k in touched.keys() if str(k).lstrip('-').isdigit()]
+            next_key = str(max(existing_keys, default=-1) + 1)
             touched[next_key] = {
                 'Item': {
-                    'Attributes': new_item.get('Attributes', {}),
-                    'Effects':    {},
+                    'Attributes': new_item.get('Attributes', BSONArray()),
+                    'Effects':    BSONArray(),
                     'ItemId':     new_item['ItemId'],
                     'ItemParams': params,
                 },
