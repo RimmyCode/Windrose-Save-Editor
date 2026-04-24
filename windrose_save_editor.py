@@ -1672,10 +1672,4 @@ def main():
 
 if __name__ == '__main__':
     main()
-     break
 
-    print("\nBye!")
-
-if __name__ == '__main__':
-    main()
-main()
