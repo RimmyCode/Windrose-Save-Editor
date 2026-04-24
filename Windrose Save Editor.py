@@ -278,35 +278,58 @@ def scan_sst_for_player(save_dir: Path) -> tuple[bytes, bytes] | None:
     lib_path = None
     lib = None
 
-    # Search for the game's own rocksdb.dll first — it's guaranteed compatible
+    # Search for the game's own library first — it's guaranteed compatible
     # with the save files since the game wrote them with it.
-    game_dll_locations = []
-    for steam_base in [
-        Path(r'C:/Program Files (x86)/Steam/steamapps/common'),
-        Path(r'C:/Program Files/Steam/steamapps/common'),
-        Path(r'D:/Steam/steamapps/common'),
-        Path(r'D:/SteamLibrary/steamapps/common'),
-        Path(r'E:/Steam/steamapps/common'),
-        Path(r'E:/SteamLibrary/steamapps/common'),
-        Path(r'G:/Steam/steamapps/common'),
-        Path(r'G:/SteamLibrary/steamapps/common'),
-    ]:
+    game_lib_locations = []
+    steam_bases = []
+    if sys.platform == 'win32':
+        available_drives = []
+        if hasattr(os, 'listdrives'):
+            # Python 3.12+ - returns root paths like ['C:\\', 'D:\\']
+            available_drives = [d.rstrip(':\\') for d in os.listdrives()]
+        else:
+            # Fallback for older Python versions
+            import ctypes
+            bitmask = ctypes.windll.kernel32.GetLogicalDrives()
+            available_drives = [chr(ord('A') + i) for i in range(26) if bitmask & (1 << i)]
+
+        steam_bases = []
+        for drive in available_drives:
+            for p in [r'Program Files (x86)/Steam', r'Program Files/Steam', r'Steam', r'SteamLibrary']:
+                base = Path(f"{drive}:/") / p / 'steamapps/common'
+                if base.exists():
+                    steam_bases.append(base)
+    elif sys.platform.startswith('linux'):
+        steam_bases = [
+            Path.home() / '.local/share/Steam/steamapps/common',
+            Path.home() / '.steam/steam/steamapps/common',
+            Path.home() / '.var/app/com.valvesoftware.Steam/data/Steam/steamapps/common',
+        ]
+
+    for steam_base in steam_bases:
         for game_folder in ['Windrose', 'R5']:
-            for dll_path in (steam_base / game_folder).rglob('rocksdb.dll'):
-                game_dll_locations.append(dll_path)
+            if not (steam_base / game_folder).exists():
+                continue
+            # Look for both .dll (Windows) and .so (Linux)
+            for lib_path in (steam_base / game_folder).rglob('rocksdb.dll'):
+                game_lib_locations.append(lib_path)
+            for lib_path in (steam_base / game_folder).rglob('librocksdb.so*'):
+                game_lib_locations.append(lib_path)
 
     candidates = (
-        game_dll_locations +          # game's own DLL (best)
+        game_lib_locations +          # game's own library (best)
         [
             script_dir / 'rocksdb.dll',
             script_dir / 'librocksdb.dll',
             script_dir / 'librocksdb.so',
+            script_dir / 'librocksdb.so.8',
             Path('rocksdb.dll'),
             Path('librocksdb.dll'),
+            Path('librocksdb.so'),
         ]
     )
     # Also try system library names via find_library
-    for sys_name in ['rocksdb', 'librocksdb.so.8.9', 'librocksdb.so.8']:
+    for sys_name in ['rocksdb', 'librocksdb', 'rocksdb-jemalloc']:
         found = ctypes.util.find_library(sys_name)
         if found:
             candidates.append(Path(found))
@@ -323,10 +346,15 @@ def scan_sst_for_player(save_dir: Path) -> tuple[bytes, bytes] | None:
             continue
 
     if lib is None:
-        print("  [WARN] rocksdb.dll not found. Make sure rocksdb.dll is in the")
+        lib_name = "librocksdb.so" if sys.platform.startswith('linux') else "rocksdb.dll"
+        print(f"  [WARN] {lib_name} not found. Make sure it is in the")
         print(f"         same folder as this script: {script_dir}")
-        print("  Download from: https://www.nuget.org/packages/RocksDB")
-        print("  (open .nupkg with 7-zip, grab rocksdb.dll from runtimes/win-x64/native/)")
+        if sys.platform.startswith('linux'):
+            print("  Try: sudo apt install librocksdb-dev  (or your distro's equivalent)")
+            print("  Or extract librocksdb.so from the NuGet package (runtimes/linux-x64/native/)")
+        else:
+            print("  Download from: https://www.nuget.org/packages/RocksDB")
+            print("  (open .nupkg with 7-zip, grab rocksdb.dll from runtimes/win-x64/native/)")
         return None
 
     CF_NAMES = [b'default', b'R5LargeObjects', b'R5BLPlayer',
