@@ -535,30 +535,52 @@ def new_item_guid() -> str:
     return uuid.uuid4().hex.upper()
 
 def blank_item(item_params_path: str, level: int = 1, max_level: int = 15) -> dict:
-    """Create a new item entry matching the game's save format."""
-    return {
-        'Attributes': {
+    """Create a new item entry matching the game's save format.
+    Equipment gets a level attribute; consumables/stackables get empty Attributes.
+    """
+    attrs = {}
+    if is_equipment(item_params_path):
+        attrs = {
             '0': {
+                'MaxValue': max_level,
                 'Tag': {'TagName': 'Inventory.Item.Attribute.Level'},
-                'Value': level,
-                'MaxValue': max_level
+                'Value': max(1, level),
             }
-        },
+        }
+    return {
+        'Attributes': attrs,
         'Effects': {},
-        'ItemId': new_item_guid(),
+        'ItemId': 'DB54628677934C810C9BCDDB309F1FE4',
         'ItemParams': item_params_path
     }
 
+def infer_slot_params(mod: dict, slot_id: int) -> str:
+    """
+    Infer the correct SlotParams for a new slot by looking at existing
+    slots in the same module. Falls back to DA_BL_Slot_Default.
+    """
+    slots = mod.get('Slots', {})
+    for s in slots.values():
+        sp = s.get('SlotParams', '')
+        if sp:
+            return sp
+    return '/R5BusinessRules/Inventory/SlotsParams/DA_BL_Slot_Default.DA_BL_Slot_Default'
+
+
 def blank_slot_with_item(item_params_path: str, level: int = 1,
-                         count: int = 1, slot_id: int = 0) -> dict:
+                         count: int = 1, slot_id: int = 0,
+                         mod: dict = None) -> dict:
+    slot_params = (infer_slot_params(mod, slot_id)
+                   if mod is not None
+                   else '/R5BusinessRules/Inventory/SlotsParams/DA_BL_Slot_Default.DA_BL_Slot_Default')
     return {
         'IsPersonalSlot': False,
         'ItemsStack': {
-            'Count': count,           # Count lives inside ItemsStack
+            'Count': count,
             'Item': blank_item(item_params_path, level)
         },
-        'SlotId': slot_id,            # SlotId must match the slot's key
-        'SlotParams': '/R5BusinessRules/Inventory/SlotsParams/DA_BL_Slot_Default.DA_BL_Slot_Default'
+        'SlotId': slot_id,
+        'SlotParams': slot_params
     }
 
 def get_all_items(doc: dict) -> list[dict]:
@@ -646,18 +668,37 @@ def slot_has_item(slot: dict) -> bool:
     return bool(params)
 
 
+def get_base_capacity(mod: dict) -> int:
+    """
+    Return the base (non-expansion) slot count for a module.
+    These are the slots the game pre-allocates and manages itself.
+    We derive this as the count of AdditionalSlotsData entries with the
+    smallest CountSlots values — the base bag before any backpack expansion.
+    Falls back to the total capacity if we can't determine it.
+    """
+    additional = mod.get('AdditionalSlotsData') or {}
+    if not additional:
+        return get_module_capacity(mod)
+    # Sort slot grants by size — the first (smallest) is the base bag
+    grants = sorted(
+        (int(v.get('CountSlots', 0)) for v in additional.values() if isinstance(v, dict)),
+    )
+    return grants[0] if grants else get_module_capacity(mod)
+
+
 def get_empty_slots(doc: dict, module: int = 0) -> list[int]:
     """
-    Return slot indices that are available for a new item.
-    Includes both missing slots and slots that exist but have empty ItemParams
-    (the game pre-allocates all slots with blank entries).
+    Return slot indices safe for adding new items.
+    Only returns expansion slots (index >= base capacity) to avoid
+    conflicting with slots the game pre-allocates and manages itself.
     """
     mods     = doc.get('Inventory', {}).get('Modules', {})
     mod      = mods.get(str(module), {})
     slots    = mod.get('Slots', {})
     capacity = get_module_capacity(mod)
+    base     = get_base_capacity(mod)
     empty = []
-    for i in range(capacity):
+    for i in range(base, capacity):   # only look above base pre-allocated range
         slot = slots.get(str(i))
         if slot is None or not slot_has_item(slot):
             empty.append(i)
@@ -808,14 +849,14 @@ def edit_stats(doc: dict) -> bool:
     print()
     choice = input("  Stat # to edit (or Enter to go back): ").strip()
     if not choice:
-        return False
+        return False, None
 
     try:
         idx = int(choice) - 1
         k, v, nd, real_name, level, max_lvl = stat_list[idx]
     except (ValueError, IndexError):
         print("  Invalid choice.")
-        input("  Press Enter…"); return False
+        input("  Press Enter…"); return False, None
 
     try:
         new_lvl = int(input(f"  New level for {real_name} (current: {level}, max: {max_lvl}): "))
@@ -828,10 +869,10 @@ def edit_stats(doc: dict) -> bool:
         )
         print(f"  ✓ {real_name} → {new_lvl}/{max_lvl}")
         print(f"  ✓ ProgressionPoints updated → {st['ProgressionPoints']}")
-        return True
+        return True, f"Stat: {real_name} {level} -> {new_lvl}"
     except ValueError:
         print("  Invalid level.")
-        input("  Press Enter…"); return False
+        input("  Press Enter..."); return False, None
 
 
 def edit_skills(doc: dict) -> bool:
@@ -852,7 +893,7 @@ def edit_skills(doc: dict) -> bool:
 
         cat_choice = input("  Category: ").strip().lower()
         if cat_choice == 'b':
-            return False
+            return False, None
 
         try:
             cat_key, cat_info = cats[int(cat_choice) - 1]
@@ -921,11 +962,11 @@ def edit_skills(doc: dict) -> bool:
                 cat_nodes[si] = (k, v, nd, real_name, talent_key, new_lvl, max_lvl)
                 print(f"  ✓ {real_name} → {new_lvl}/{max_lvl}")
                 print(f"  ✓ ProgressionPoints updated → {tt['ProgressionPoints']}")
-                return True
+                return True, f"Skill: {real_name} {level} -> {new_lvl}"
             except ValueError:
                 print("  Invalid level.")
 
-    return False
+    return False, None
 
 
 
@@ -940,37 +981,41 @@ def is_equipment(item_params: str) -> bool:
     name = item_params.split('/')[-1].split('.')[0]
     return any(name.startswith(p) for p in EQUIP_PREFIXES)
 
-def ensure_equipment_integrity(item: dict, stack: dict, item_params: str):
+def ensure_equipment_integrity(item: dict, stack: dict,
+                               old_params: str, new_params: str):
     """
-    For weapons and armor:
-    - Force Count = 1 (stacking corrupts the save)
-    - Force Level >= 1 (level 0 equipment corrupts the save)
-    - Add level attribute if missing
+    Enforce item rules when replacing:
+    - New item is weapon/armor: Count=1, Level>=1, add attr if missing
+    - New item is NOT equipment (was weapon/armor): Level=0
     """
-    if not is_equipment(item_params):
-        return
+    was_equip = is_equipment(old_params)
+    now_equip = is_equipment(new_params)
 
-    # Force count to 1
-    stack['Count'] = 1
-
-    attrs = item.get('Attributes', {})
-    level_attr = None
-    for a in attrs.values():
-        if isinstance(a, dict) and 'Level' in a.get('Tag', {}).get('TagName', ''):
-            level_attr = a
-            break
-
-    if level_attr is None:
-        # Add the level attribute if completely missing
-        item.setdefault('Attributes', {})['0'] = {
-            'MaxValue': 15,
-            'Tag': {'TagName': 'Inventory.Item.Attribute.Level'},
-            'Value': 1
-        }
-        print("  [Auto] Added missing level attribute (set to 1)")
-    elif level_attr.get('Value', 0) < 1:
-        level_attr['Value'] = 1
-        print("  [Auto] Level was 0 — set to 1 (minimum for equipment)")
+    if now_equip:
+        stack['Count'] = 1
+        attrs = item.get('Attributes', {})
+        level_attr = None
+        for a in attrs.values():
+            if isinstance(a, dict) and 'Level' in a.get('Tag', {}).get('TagName', ''):
+                level_attr = a
+                break
+        if level_attr is None:
+            item.setdefault('Attributes', {})['0'] = {
+                'MaxValue': 15,
+                'Tag': {'TagName': 'Inventory.Item.Attribute.Level'},
+                'Value': 1
+            }
+            print("  [Auto] Added missing level attribute (set to 1)")
+        elif level_attr.get('Value', 0) < 1:
+            level_attr['Value'] = 1
+            print("  [Auto] Level was 0 - set to 1 (minimum for equipment)")
+    elif was_equip and not now_equip:
+        attrs = item.get('Attributes', {})
+        for a in attrs.values():
+            if isinstance(a, dict) and 'Level' in a.get('Tag', {}).get('TagName', ''):
+                a['Value'] = 0
+                print("  [Auto] Level reset to 0 (non-equipment item)")
+                break
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1012,7 +1057,7 @@ def restore_backup(save_dir: Path) -> bool:
     backups = list_backups(save_dir)
     if not backups:
         print("  No backups found.")
-        return False
+        return False, None
 
     root = find_save_root(save_dir)
     print()
@@ -1029,7 +1074,7 @@ def restore_backup(save_dir: Path) -> bool:
         chosen = backups[idx]
     except (ValueError, IndexError):
         print("  Cancelled.")
-        return False
+        return False, None
 
     is_root_backup = chosen.name.startswith(root.name + '_backup_')
     restore_target = root if is_root_backup else save_dir
@@ -1058,7 +1103,7 @@ def kill_game() -> bool:
     except ImportError:
         print("  [INFO] psutil not installed — can't auto-close game.")
         print("         Run:  pip install psutil  to enable this feature.")
-        return False
+        return False, None
 
     killed = []
     for proc in psutil.process_iter(['name', 'pid']):
@@ -1078,7 +1123,7 @@ def kill_game() -> bool:
         return True
     else:
         print("  Game doesn't appear to be running.")
-        return False
+        return False, None
 
 
 def find_save_root(save_dir: Path) -> Path:
@@ -1180,20 +1225,20 @@ def verify_wal(wal_path: Path, expected_key: bytes) -> bool:
         result = read_wal(wal_path)
         if result is None:
             print(f"  [VERIFY] FAIL — WAL reads as empty")
-            return False
+            return False, None
         seq, cf, key, bson, _ = result
         if key != expected_key:
             print(f"  [VERIFY] FAIL — key mismatch: {key} vs {expected_key}")
-            return False
+            return False, None
         doc = parse_bson(bson)
         if not doc.get('_guid'):
             print(f"  [VERIFY] FAIL — BSON missing _guid")
-            return False
+            return False, None
         print(f"  [VERIFY] OK — seq={seq} key={key.decode()} bson={len(bson):,}B")
         return True
     except Exception as e:
         print(f"  [VERIFY] FAIL — {e}")
-        return False
+        return False, None
 
 
 def write_via_rocksdb(save_dir: Path, cf_id: int,
@@ -1208,7 +1253,7 @@ def write_via_rocksdb(save_dir: Path, cf_id: int,
                        key=lambda f: int(f.stem) if f.stem.isdigit() else 0)
     if not log_files:
         print("  [ERROR] No .log file found in save directory.")
-        return False
+        return False, None
 
     last_sequence, next_file_number, log_number = parse_manifest(save_dir)
     if last_sequence == 0:
@@ -1233,7 +1278,7 @@ def write_via_rocksdb(save_dir: Path, cf_id: int,
     print(f"  Verifying WAL readback…", end=' ')
     if not verify_wal(new_wal_path, player_key):
         print("  WAL write may be corrupted.")
-        return False
+        return False, None
 
     print(f"✓ WAL verified and ready")
     return True
@@ -1352,18 +1397,119 @@ def commit_changes(save_dir: Path, wal_path: Path,
     print("  Restore it via option 9 if needed.")
     return False
 
+def peek_player_name(player_dir: Path) -> str:
+    """Read player name from the WAL or SST without full parse."""
+    try:
+        wal_path = find_wal(player_dir)
+        result = read_wal(wal_path)
+        if result:
+            _, _, _, bson_bytes, _ = result
+            doc = parse_bson(bson_bytes)
+            return doc.get('PlayerName', '')
+    except Exception:
+        pass
+    # Try SST via rocksdb
+    try:
+        result = scan_sst_for_player(player_dir)
+        if result:
+            _, bson_bytes = result
+            doc = parse_bson(bson_bytes)
+            return doc.get('PlayerName', '')
+    except Exception:
+        pass
+    return ''
+
+
+def pick_save_interactively() -> Path | None:
+    """
+    Auto-detect save location and let the user pick Steam ID + character.
+    Returns the resolved Players/<GUID> path or None if cancelled.
+    """
+    import os
+
+    local_app = Path(os.environ.get('LOCALAPPDATA', ''))
+    profiles_root = local_app / 'R5' / 'Saved' / 'SaveProfiles'
+
+    if not profiles_root.exists():
+        print(f"[ERROR] Could not find save profiles at: {profiles_root}")
+        print("  Run with a path argument: python windrose_save_editor.py <path>")
+        return None
+
+    # Find all Steam ID folders (numeric names, not backups)
+    steam_ids = sorted([
+        d for d in profiles_root.iterdir()
+        if d.is_dir() and d.name.isdigit()
+    ])
+
+    if not steam_ids:
+        print(f"[ERROR] No Steam ID folders found in {profiles_root}")
+        return None
+
+    # Pick Steam ID
+    if len(steam_ids) == 1:
+        steam_dir = steam_ids[0]
+        print(f"  Steam ID: {steam_dir.name}")
+    else:
+        print("\n  Steam accounts found:")
+        for i, d in enumerate(steam_ids, 1):
+            print(f"    {i}. {d.name}")
+        print()
+        try:
+            choice = int(input("  Select account: ")) - 1
+            steam_dir = steam_ids[choice]
+        except (ValueError, IndexError):
+            print("  Cancelled.")
+            return None
+
+    # Find Players directory
+    players_root = steam_dir / 'RocksDB' / '0.10.0' / 'Players'
+    if not players_root.exists():
+        print(f"[ERROR] Players folder not found: {players_root}")
+        return None
+
+    player_dirs = sorted([
+        d for d in players_root.iterdir()
+        if d.is_dir() and (d / 'CURRENT').exists()
+    ])
+
+    if not player_dirs:
+        print("[ERROR] No player saves found.")
+        return None
+
+    if len(player_dirs) == 1:
+        return player_dirs[0]
+
+    # Multiple characters — fetch names
+    print("\n  Characters found:")
+    entries = []
+    for d in player_dirs:
+        print(f"    Loading {d.name}...", end='\r', flush=True)
+        name = peek_player_name(d)
+        entries.append((d, name))
+        label = f"{d.name}  |  {name}" if name else d.name
+        print(f"    {len(entries)}. {label}          ")
+
+    print()
+    try:
+        choice = int(input("  Select character: ")) - 1
+        return entries[choice][0]
+    except (ValueError, IndexError):
+        print("  Cancelled.")
+        return None
+
+
 def main():
-    if len(sys.argv) < 2:
-        print(__doc__)
-        sys.exit(1)
-
-    save_dir = Path(sys.argv[1]).resolve()
-    if not save_dir.exists():
-        print(f"[ERROR] Directory not found: {save_dir}")
-        sys.exit(1)
-
-    # Auto-detect nested save folder (Steam ID → character subfolder)
-    save_dir = resolve_save_dir(save_dir)
+    if len(sys.argv) >= 2:
+        save_dir = Path(sys.argv[1]).resolve()
+        if not save_dir.exists():
+            print(f"[ERROR] Directory not found: {save_dir}")
+            sys.exit(1)
+        save_dir = resolve_save_dir(save_dir)
+    else:
+        save_dir = pick_save_interactively()
+        if save_dir is None:
+            print("No save selected.")
+            sys.exit(0)
 
     if not (save_dir / 'CURRENT').exists():
         print(f"[ERROR] Could not find a save folder (no CURRENT file) under:")
@@ -1408,6 +1554,7 @@ def main():
     # Track whether we've backed up
     backed_up = False
     modified  = False
+    changelog = []
 
     while True:
         print_header()
@@ -1416,6 +1563,8 @@ def main():
         print(f"  2. Set Item Level")
         print(f"  3. Set Item Count")
         print(f"  4. Replace Item")
+        print(f"  5. Stat Editor")
+        print(f"  6. Skill Editor")
         print(f"  7. Export full save as JSON")
         print(f"  8. Force-close game")
         print(f"  9. Save changes")
@@ -1452,6 +1601,7 @@ def main():
                         a['Value'] = new_lvl
                         break
                 print(f"  ✓ {it['item_name']} → level {new_lvl}")
+                changelog.append(f"Level:   {it['item_name']} {it['level']} -> {new_lvl}")
                 modified = True
             except (ValueError, IndexError) as e:
                 print(f"  Invalid input: {e}")
@@ -1466,6 +1616,7 @@ def main():
                 new_cnt = int(input(f"  New count (current: {it['count']}): "))
                 it['stack_ref']['Count'] = new_cnt
                 print(f"  ✓ {it['item_name']} → count {new_cnt}")
+                changelog.append(f"Count:   {it['item_name']} {it['count']} -> {new_cnt}")
                 modified = True
             except (ValueError, IndexError) as e:
                 print(f"  Invalid input: {e}")
@@ -1506,42 +1657,66 @@ def main():
             it['item_ref']['ItemParams'] = new_params
             it['item_ref']['ItemId']     = new_item_guid()
 
-            # Also update level if item type changes
-            new_level_str = input(f"  New level (Enter to keep {it['level']}): ").strip()
-            if new_level_str:
-                try:
-                    new_level = int(new_level_str)
-                    for a in it['attrs_ref'].values():
-                        if isinstance(a, dict) and 'Level' in a.get('Tag',{}).get('TagName',''):
-                            a['Value'] = new_level
-                            break
-                except ValueError:
-                    pass
+            # Only prompt for level when BOTH old and new are equipment (weapon->weapon)
+            # food->weapon: integrity auto-sets to 1, no prompt needed
+            # weapon->food: integrity auto-sets to 0, no prompt needed
+            if is_equipment(new_params) and is_equipment(it['item_params']):
+                new_level_str = input(f"  New level (Enter to keep {it['level']}): ").strip()
+                if new_level_str:
+                    try:
+                        new_level = int(new_level_str)
+                        for a in it['attrs_ref'].values():
+                            if isinstance(a, dict) and 'Level' in a.get('Tag',{}).get('TagName',''):
+                                a['Value'] = new_level
+                                break
+                    except ValueError:
+                        pass
 
-            # Enforce weapon/armor integrity rules
-            ensure_equipment_integrity(it['item_ref'], it['stack_ref'], new_params)
+            # Enforce weapon/armor integrity rules (handles both directions)
+            ensure_equipment_integrity(it['item_ref'], it['stack_ref'], it['item_params'], new_params)
+
+            # If going from equipment -> stackable, offer to set quantity
+            if is_equipment(it['item_params']) and not is_equipment(new_params):
+                qty_str = input("  Set quantity (Enter to keep 1): ").strip()
+                if qty_str:
+                    try:
+                        qty = max(1, int(qty_str))
+                        it['stack_ref']['Count'] = qty
+                        changelog.append(f"Count:   {new_name} set to {qty}")
+                    except ValueError:
+                        pass
 
             new_name = new_params.split('/')[-1].split('.')[0]
             print(f"  ✓ Replaced with: {new_name}")
+            changelog.append(f"Replace: {it['item_name']} -> {new_name}")
             modified = True
             input("  Press Enter…")
 
+        elif choice == '5':
+            result = edit_stats(doc)
+            ok, msg = result if isinstance(result, tuple) else (result, None)
+            if ok:
+                modified = True
+                if msg: changelog.append(msg)
+            input('  Press Enter...')
+
+        elif choice == '6':
+            result = edit_skills(doc)
+            ok, msg = result if isinstance(result, tuple) else (result, None)
+            if ok:
+                modified = True
+                if msg: changelog.append(msg)
+
         elif choice == 'dev':
             print("\n  ⚠  EXPERIMENTAL — Use at your own risk")
-            print("  1. Stat Editor")
-            print("  2. Skill Editor")
-            print("  3. Add item to inventory")
-            print("  4. Remove item from inventory")
+            print("  1. Add item to inventory")
+            print("  2. Remove item from inventory")
             print("  B. Back")
             print()
             dev_choice = input("  Choice: ").strip().lower()
             if dev_choice == '1':
-                choice = '_stats'
-            elif dev_choice == '2':
-                choice = '_skills'
-            elif dev_choice == '3':
                 choice = '_add'
-            elif dev_choice == '4':
+            elif dev_choice == '2':
                 choice = '_remove'
             else:
                 input("  Press Enter…"); continue
@@ -1596,7 +1771,30 @@ def main():
                 input("  Press Enter…"); continue
 
             slots = mods[str(mod_idx)].setdefault('Slots', {})
-            slots[str(slot_idx)] = blank_slot_with_item(params, level, count, slot_idx)
+            # If the slot already exists (pre-allocated empty), patch it in place
+            existing = slots.get(str(slot_idx))
+            new_item = blank_item(params, level)
+            if existing is not None:
+                stack = existing.setdefault('ItemsStack', {})
+                stack['Count'] = count
+                stack['Item'] = new_item
+                existing['SlotId'] = slot_idx
+            else:
+                slots[str(slot_idx)] = blank_slot_with_item(params, level, count, slot_idx, mod=mods[str(mod_idx)])
+
+            # Register in WasTouchedItems so the game recognises the item instance
+            inv_meta = doc.setdefault('PlayerMetadata', {}).setdefault('InventoryMetadata', {})
+            touched  = inv_meta.setdefault('WasTouchedItems', {})
+            next_key = str(max((int(k) for k in touched.keys()), default=-1) + 1)
+            touched[next_key] = {
+                'Item': {
+                    'Attributes': new_item.get('Attributes', {}),
+                    'Effects':    {},
+                    'ItemId':     new_item['ItemId'],
+                    'ItemParams': params,
+                },
+                'bIsNew': False,
+            }
 
             name = params.split('/')[-1].split('.')[0]
             print(f"  ✓ Added '{name}' to module {mod_idx} slot {slot_idx}")
@@ -1623,7 +1821,21 @@ def main():
         elif choice == '9':
             if not modified:
                 print("  No changes to save.")
-                input("  Press Enter…"); continue
+                input("  Press Enter..."); continue
+
+            print()
+            print("  Changes this session:")
+            print("  " + "-"*60)
+            for entry in changelog:
+                print(f"    {entry}")
+            if not changelog:
+                print("    (no tracked changes)")
+            print("  " + "-"*60)
+            print()
+            confirm_save = input("  Save these changes? [Y/n]: ").strip().lower()
+            if confirm_save not in ('', 'y', 'yes'):
+                print("  Save cancelled.")
+                input("  Press Enter..."); continue
 
             if not backed_up:
                 print()
@@ -1662,15 +1874,6 @@ def main():
                     break
             input('  Press Enter...')
 
-
-        elif choice == '_stats':
-            if edit_stats(doc):
-                modified = True
-            input('  Press Enter...')
-
-        elif choice == '_skills':
-            if edit_skills(doc):
-                modified = True
 
         elif choice == '0':
             if modified:
