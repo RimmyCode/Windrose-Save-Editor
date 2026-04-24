@@ -17,9 +17,24 @@ Typically: %LOCALAPPDATA%\\R5\\Saved\\SaveProfiles\\<character_folder>
 ALWAYS back up your save folder before editing!
 """
 
-import struct, sys, os, shutil, uuid, json, copy, time, threading
-from pathlib import Path
+import copy
+import ctypes
+import ctypes.util
+import json
+import os
+import shutil
+import struct
+import sys
+import threading
+import time
+import uuid
 from datetime import datetime
+from pathlib import Path
+
+try:
+    import psutil
+except ImportError:
+    psutil = None
 
 # Game process names to look for (add more if needed)
 GAME_PROCESS_NAMES = ['R5.exe', 'Windrose.exe', 'R5-Win64-Shipping.exe', 'Windrose-Win64-Shipping.exe']
@@ -271,7 +286,6 @@ def scan_sst_for_player(save_dir: Path) -> tuple[bytes, bytes] | None:
     game uses). Falls back to None if librocksdb is not available.
     Returns (player_key_bytes, bson_bytes) or None.
     """
-    import ctypes, ctypes.util
 
     # Find librocksdb — check next to this script first, then common system names
     script_dir = Path(__file__).resolve().parent
@@ -1256,8 +1270,6 @@ def _wait_for_game_exit():
     print()
     print("  Waiting for game to close… (press S to skip if already closed)")
     print("  ", end='', flush=True)
-
-    import time, threading, sys
 
     skip = threading.Event()
     def watch_key():
