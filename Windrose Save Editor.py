@@ -1217,16 +1217,29 @@ def _wait_for_game_exit():
     print("  Waiting for game to close… (press S to skip if already closed)")
     print("  ", end='', flush=True)
 
-    import time, threading, sys, msvcrt
+    import time, threading, sys
 
     skip = threading.Event()
     def watch_key():
-        while not skip.is_set():
-            if msvcrt.kbhit():
-                ch = msvcrt.getch().lower()
-                if ch == b's':
-                    skip.set()
-            time.sleep(0.05)
+        if sys.platform == 'win32':
+            import msvcrt
+            while not skip.is_set():
+                if msvcrt.kbhit():
+                    if msvcrt.getch().lower() == b's':
+                        skip.set()
+                time.sleep(0.05)
+        else:
+            import select, termios, tty
+            fd = sys.stdin.fileno()
+            old_settings = termios.tcgetattr(fd)
+            try:
+                tty.setcbreak(fd)
+                while not skip.is_set():
+                    if select.select([sys.stdin], [], [], 0.05)[0]:
+                        if sys.stdin.read(1).lower() == 's':
+                            skip.set()
+            finally:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
     watcher = threading.Thread(target=watch_key, daemon=True)
     watcher.start()
