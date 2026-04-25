@@ -1212,7 +1212,7 @@ def ensure_equipment_integrity(item: dict, stack: dict,
 
 def print_header():
     print("\n" + "═"*70)
-    print("  WINDROSE SAVE EDITOR")
+    print("  WINDROSE SAVE EDITOR - Version 1.1b")
     print("═"*70)
 
 def print_inventory(items: list[dict]):
@@ -1823,12 +1823,12 @@ def main():
         print(f"  1. View inventory")
         print(f"  2. Set Item Level")
         print(f"  3. Set Item Count")
-        print(f"  4. Add Item")
+        print(f"  4. Add Item (Now Working!)")
         print(f"  5. Replace Item")
         print(f"  6. Stat Editor")
         print(f"  7. Skill Editor")
         print(f"")
-        print(f"  E. Export save as JSON")
+        print(f"  E. Export save as JSON (For inspection)")
         print(f"  F. Force-close game")
         print(f"  S. Save changes")
         print(f"  R. Restore a backup")
@@ -1842,7 +1842,7 @@ def main():
         if choice == '4':
             choice = '_add'
         elif choice == 'dev':
-            print("\n  ⚠  EXPERIMENTAL — Use at your own risk")
+            print("\n  ⚠  EXPERIMENTAL — Use at your own risk (support WILL NOT be provided)")
             print("  1. Remove item from inventory")
             print("  B. Back")
             print()
