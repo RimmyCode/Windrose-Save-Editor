@@ -241,6 +241,12 @@ windrose_save_editor/
 The `editors/` package is intentionally UI-free — `get_stats`/`set_stat_level` and `get_skills`/`set_skill_level` are pure service functions callable from both the CLI and any future GUI.
 
 ---
+## Contributing
+
+See **[CONTRIBUTING.md](CONTRIBUTING.md)** for a full project tour, the TDD-first
+workflow, and where to put new code.
+
+---
 ## License
 
 This project is provided as-is for personal use. See the [Nexus Mods page](https://www.nexusmods.com/windrose/mods/153?tab=posts) for terms of use and redistribution details.
