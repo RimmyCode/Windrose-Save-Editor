@@ -243,3 +243,102 @@ Before committing, ask yourself:
 Format is `major.minor` — e.g. `1.2`, never `1.2.0`.
 Update `windrose_save_editor/__init__.py` and `pyproject.toml` together.
 Current release: `1.1b`.
+
+---
+
+## Making a release — step by step
+
+Once your changes are merged into `main`, here is the exact sequence to ship a new version.
+
+---
+
+### Step 1 — Bump the version number in two files
+
+Open `windrose_save_editor/__init__.py` and change the version:
+```python
+__version__ = "1.2"   # was 1.1b, or whatever the previous version was
+```
+
+Open `pyproject.toml` and change the same number:
+```toml
+version = "1.2"
+```
+
+Format is always `major.minor` — e.g. `1.2`, never `1.2.0`.
+
+---
+
+### Step 2 — Commit the version bump
+
+```bash
+git add windrose_save_editor/__init__.py pyproject.toml
+git commit -m "bump: 1.2"
+```
+
+This creates a commit that says "this is what version 1.2 looks like."
+
+---
+
+### Step 3 — Push the commit
+
+```bash
+git push
+```
+
+Nothing automated happens yet.
+
+---
+
+### Step 4 — Create and push a tag
+
+```bash
+git tag v1.2
+git push origin v1.2
+```
+
+`git tag v1.2` — marks the current commit as version 1.2.
+`git push origin v1.2` — pushes that tag to GitHub. **This is the trigger.**
+
+---
+
+### Step 5 — Watch the workflow run
+
+Go to **Actions** → **Build Release Exe** on GitHub.
+
+You will see three jobs run automatically:
+
+```
+Build (windows) ──┐
+                   ├──▶  Create GitHub Release
+Build (linux)   ──┘
+```
+
+- **Build (windows)** — fetches `rocksdb.dll` from NuGet, builds the exe with PyInstaller, packages it as `windrose-save-editor-1.2-windows.zip`
+- **Build (linux)** — same for Linux
+- **Create GitHub Release** — once both builds finish, creates a GitHub Release tagged `v1.2` and attaches both zips as downloadable files
+
+---
+
+### Step 6 — Check the release
+
+Go to **Releases** on the GitHub repo page. You should see `Windrose Save Editor 1.2` with both zip files attached and ready to download.
+
+That's it. Users can now download directly from the GitHub Releases page.
+
+---
+
+### If something goes wrong
+
+If the workflow fails partway through, fix the issue on `main`, then:
+
+```bash
+# Delete the broken tag locally and remotely
+git tag -d v1.2
+git push origin --delete v1.2
+
+# Re-tag once the fix is on main
+git tag v1.2
+git push origin v1.2
+```
+
+The workflow will re-run from scratch.
