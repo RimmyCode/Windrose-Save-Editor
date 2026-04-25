@@ -22,6 +22,7 @@ import ctypes
 import ctypes.util
 import threading
 import time
+import re
 from pathlib import Path
 
 try:
@@ -31,7 +32,7 @@ except ImportError:
 from datetime import datetime
 
 # Game process names to look for (add more if needed)
-GAME_PROCESS_NAMES = ['R5.exe', 'Windrose.exe', 'R5-Win64-Shipping.exe']
+GAME_PROCESS_NAMES = ['R5.exe', 'Windrose.exe', 'R5-Win64-Shipping.exe', 'Windrose-Win64-Shipping.exe']
 
 # CRC32C (Castagnoli) — pure Python, no external dependency.
 # crcmod/binascii use CRC32-IEEE which produces wrong checksums for RocksDB.
@@ -569,6 +570,121 @@ def find_wal(save_dir: Path) -> Path:
 def new_item_guid() -> str:
     return uuid.uuid4().hex.upper()
 
+_ITEM_DB_CACHE = None
+
+def load_item_database(html_path: Path | None = None) -> list[dict]:
+    """
+    Load item metadata from Item ID Database.html.
+    Expected format: `const ITEMS = [...]` (JSON array).
+    """
+    global _ITEM_DB_CACHE
+    if _ITEM_DB_CACHE is not None:
+        return _ITEM_DB_CACHE
+
+    if html_path is None:
+        html_path = Path(__file__).resolve().parent / 'Item ID Database.html'
+
+    if not html_path.exists():
+        _ITEM_DB_CACHE = []
+        return _ITEM_DB_CACHE
+
+    try:
+        raw_html = html_path.read_text(encoding='utf-8', errors='replace')
+        match = re.search(r'const\s+ITEMS\s*=\s*(\[[\s\S]*?\]);', raw_html)
+        if not match:
+            _ITEM_DB_CACHE = []
+            return _ITEM_DB_CACHE
+        _ITEM_DB_CACHE = json.loads(match.group(1))
+        return _ITEM_DB_CACHE
+    except Exception:
+        _ITEM_DB_CACHE = []
+        return _ITEM_DB_CACHE
+
+def resolve_itemparams_from_input(raw_input: str) -> tuple[str | None, str]:
+    """
+    Resolve user input into an ItemParams path.
+    Supports:
+    - direct ItemParams paths
+    - Item IDs from Item ID Database (filename / DA_EID_* style)
+    - exact display names from Item ID Database
+    """
+    value = raw_input.strip()
+    if not value:
+        return None, "Empty input."
+
+    # Direct ItemParams entry (old behavior)
+    if '/' in value and '.' in value:
+        params = value
+        if not params.startswith('/'):
+            params = '/' + params
+        if params.startswith('/Plugins/'):
+            params = params[len('/Plugins/'):]
+        params = params.replace('/Content/', '/')
+        return params, "Using direct ItemParams input."
+
+    items = load_item_database()
+    if not items:
+        return None, "Item database not found or unreadable (Item ID Database.html)."
+
+    query = value.lower()
+
+    # 1) Exact filename (preferred for IDs like DA_EID_...)
+    exact_filename = [
+        it for it in items
+        if str(it.get('filename', '')).lower() == query and it.get('item_params_path')
+    ]
+    if len(exact_filename) == 1:
+        it = exact_filename[0]
+        return it['item_params_path'], f"Matched item ID: {it.get('filename', '')}"
+
+    # 2) Exact display name
+    exact_name = [
+        it for it in items
+        if str(it.get('display_name', '')).lower() == query and it.get('item_params_path')
+    ]
+    if len(exact_name) == 1:
+        it = exact_name[0]
+        return it['item_params_path'], f"Matched item name: {it.get('display_name', '')}"
+
+    # 3) Partial filename/name search fallback
+    partial = []
+    for it in items:
+        fn = str(it.get('filename', ''))
+        dn = str(it.get('display_name', ''))
+        p  = it.get('item_params_path')
+        if not p:
+            continue
+        if query in fn.lower() or query in dn.lower():
+            partial.append(it)
+
+    if not partial:
+        return None, "No item match found in Item ID Database."
+    if len(partial) == 1:
+        it = partial[0]
+        return it['item_params_path'], f"Matched: {it.get('display_name', '')} ({it.get('filename', '')})"
+
+    print(f"\n  Found {len(partial)} matches for '{value}'.")
+    print("  Choose one:")
+    preview = partial[:20]
+    for i, it in enumerate(preview, 1):
+        name = it.get('display_name', 'Unknown')
+        fn = it.get('filename', '')
+        print(f"    {i:>2}. {name}  [{fn}]")
+    if len(partial) > len(preview):
+        print(f"    ... and {len(partial) - len(preview)} more")
+
+    pick = input("  Match # (Enter to cancel): ").strip()
+    if not pick:
+        return None, "Cancelled."
+    try:
+        idx = int(pick) - 1
+        if idx < 0 or idx >= len(preview):
+            return None, "Invalid match number."
+        it = preview[idx]
+        return it['item_params_path'], f"Matched: {it.get('display_name', '')} ({it.get('filename', '')})"
+    except ValueError:
+        return None, "Invalid match number."
+
 def blank_item(item_params_path: str, level: int = 1, max_level: int = 15) -> dict:
     """Create a new item entry matching the game's save format.
     Equipment gets a level attribute; consumables/stackables get empty Attributes.
@@ -861,54 +977,97 @@ def get_progression(doc: dict) -> dict:
     return doc.get('PlayerMetadata', {}).get('PlayerProgression', {})
 
 
-def edit_stats(doc: dict) -> bool:
+def sync_progression_points(doc: dict) -> list[str]:
+    """
+    Keep progression counters consistent with node levels.
+    A mismatch can make the in-game Progression/Talents UI fail to render.
+    Returns a list of human-readable fixes that were applied.
+    """
+    fixes = []
+    pp = get_progression(doc)
+
+    stat_tree = pp.get('StatTree', {})
+    stat_nodes = stat_tree.get('Nodes', {})
+    if isinstance(stat_nodes, dict):
+        stat_sum = sum(
+            node.get('NodeLevel', 0) for node in stat_nodes.values()
+            if isinstance(node, dict)
+        )
+        old_stat_points = stat_tree.get('ProgressionPoints', 0)
+        if old_stat_points != stat_sum:
+            stat_tree['ProgressionPoints'] = stat_sum
+            fixes.append(f"StatTree ProgressionPoints: {old_stat_points} -> {stat_sum}")
+
+    talent_tree = pp.get('TalentTree', {})
+    talent_nodes = talent_tree.get('Nodes', {})
+    if isinstance(talent_nodes, dict):
+        talent_sum = sum(
+            node.get('NodeLevel', 0) for node in talent_nodes.values()
+            if isinstance(node, dict)
+        )
+        old_talent_points = talent_tree.get('ProgressionPoints', 0)
+        if old_talent_points != talent_sum:
+            talent_tree['ProgressionPoints'] = talent_sum
+            fixes.append(f"TalentTree ProgressionPoints: {old_talent_points} -> {talent_sum}")
+
+    return fixes
+
+
+def edit_stats(doc: dict) -> tuple[bool, list[str]]:
     """Stat editor — StatTree NodeLevel (0-60). NodeLevel lives on the node, not NodeData."""
     pp    = get_progression(doc)
     st    = pp.get('StatTree', {})
     nodes = st.get('Nodes', {})
 
-    print(f"\n  === STAT EDITOR ===")
-    print()
+    changed = False
+    changes = []
 
-    stat_list = []
-    for i, (k, v) in enumerate(sorted(nodes.items(), key=lambda x: int(x[0])), 1):
-        nd       = v.get('NodeData', {})
-        perks    = nd.get('Perks', {})
-        perk_path = list(perks.values())[0] if perks else ''
-        perk_name = perk_path.split('/')[-1].split('.')[0] if perk_path else f'Node{k}'
-        real_name = STAT_NAMES.get(perk_name, perk_name)
-        level     = v.get('NodeLevel', 0)       # NodeLevel is on the node itself
-        max_lvl   = nd.get('MaxNodeLevel', 60)
-        stat_list.append((k, v, nd, real_name, level, max_lvl))
-        print(f"  {i}. {real_name:<14}  {level}/{max_lvl}")
+    while True:
+        print(f"\n  === STAT EDITOR ===")
+        print()
 
-    print()
-    choice = input("  Stat # to edit (or Enter to go back): ").strip()
-    if not choice:
-        return False, None
+        stat_list = []
+        for i, (k, v) in enumerate(sorted(nodes.items(), key=lambda x: int(x[0])), 1):
+            nd       = v.get('NodeData', {})
+            perks    = nd.get('Perks', {})
+            perk_path = list(perks.values())[0] if perks else ''
+            perk_name = perk_path.split('/')[-1].split('.')[0] if perk_path else f'Node{k}'
+            real_name = STAT_NAMES.get(perk_name, perk_name)
+            level     = v.get('NodeLevel', 0)       # NodeLevel is on the node itself
+            max_lvl   = nd.get('MaxNodeLevel', 60)
+            stat_list.append((k, v, nd, real_name, level, max_lvl))
+            print(f"  {i}. {real_name:<14}  {level}/{max_lvl}")
 
-    try:
-        idx = int(choice) - 1
-        k, v, nd, real_name, level, max_lvl = stat_list[idx]
-    except (ValueError, IndexError):
-        print("  Invalid choice.")
-        input("  Press Enter…"); return False, None
+        print()
+        choice = input("  Stat # to edit (or Enter to go back): ").strip()
+        if not choice:
+            return changed, changes
 
-    try:
-        new_lvl = int(input(f"  New level for {real_name} (current: {level}, max: {max_lvl}): "))
-        new_lvl = max(0, min(new_lvl, max_lvl))
-        v['NodeLevel'] = new_lvl
-        # Recalculate ProgressionPoints = sum of all node levels
-        st['ProgressionPoints'] = sum(
-            node.get('NodeLevel', 0) for node in nodes.values()
-            if isinstance(node, dict)
-        )
-        print(f"  ✓ {real_name} → {new_lvl}/{max_lvl}")
-        print(f"  ✓ ProgressionPoints updated → {st['ProgressionPoints']}")
-        return True, f"Stat: {real_name} {level} -> {new_lvl}"
-    except ValueError:
-        print("  Invalid level.")
-        input("  Press Enter..."); return False, None
+        try:
+            idx = int(choice) - 1
+            k, v, nd, real_name, level, max_lvl = stat_list[idx]
+        except (ValueError, IndexError):
+            print("  Invalid choice.")
+            input("  Press Enter…")
+            continue
+
+        try:
+            new_lvl = int(input(f"  New level for {real_name} (current: {level}, max: {max_lvl}): "))
+            new_lvl = max(0, min(new_lvl, max_lvl))
+            v['NodeLevel'] = new_lvl
+            # Recalculate ProgressionPoints = sum of all node levels
+            st['ProgressionPoints'] = sum(
+                node.get('NodeLevel', 0) for node in nodes.values()
+                if isinstance(node, dict)
+            )
+            print(f"  ✓ {real_name} → {new_lvl}/{max_lvl}")
+            print(f"  ✓ ProgressionPoints updated → {st['ProgressionPoints']}")
+            changed = True
+            changes.append(f"Stat: {real_name} {level} -> {new_lvl}")
+            input("  Press Enter...")
+        except ValueError:
+            print("  Invalid level.")
+            input("  Press Enter...")
 
 
 
@@ -1011,11 +1170,14 @@ def talent_perk_path(category: str, skill_suffix: str) -> str:
     return TALENT_NODE_DATA.get(da, {}).get('path',
         f"/R5BusinessRules/EntityProgression/Talents/{category}/{da}.{da}")
 
-def edit_skills(doc: dict) -> bool:
+def edit_skills(doc: dict) -> tuple[bool, list[str]]:
     """Skill editor — TalentTree NodeLevel (0-3), grouped by category."""
     pp = get_progression(doc)
     tt = pp.get('TalentTree', {})
     nodes = tt.get('Nodes', {})
+
+    changed = False
+    changes = []
 
     # Category selection loop
     while True:
@@ -1029,7 +1191,7 @@ def edit_skills(doc: dict) -> bool:
 
         cat_choice = input("  Category: ").strip().lower()
         if cat_choice == 'b':
-            return False, None
+            return changed, changes
 
         try:
             cat_key, cat_info = cats[int(cat_choice) - 1]
@@ -1150,11 +1312,14 @@ def edit_skills(doc: dict) -> bool:
                 cat_nodes[si] = (k, v, nd, real_name, talent_key, perk_path, new_lvl, max_lvl)
                 print(f"  ✓ {real_name} → {new_lvl}/{max_lvl}")
                 print(f"  ✓ ProgressionPoints updated → {tt['ProgressionPoints']}")
-                return True, f"Skill: {real_name} {level} -> {new_lvl}"
+                changed = True
+                changes.append(f"Skill: {real_name} {level} -> {new_lvl}")
+                input("  Press Enter...")
             except ValueError:
                 print("  Invalid level.")
+                input("  Press Enter...")
 
-    return False, None
+    return changed, changes
 
 
 
@@ -1212,7 +1377,7 @@ def ensure_equipment_integrity(item: dict, stack: dict,
 
 def print_header():
     print("\n" + "═"*70)
-    print("  WINDROSE SAVE EDITOR - Version 1.1b")
+    print("  WINDROSE SAVE EDITOR - Version 1.2")
     print("═"*70)
 
 def print_inventory(items: list[dict]):
@@ -1649,6 +1814,33 @@ def peek_player_name(player_dir: Path) -> str:
     return ''
 
 
+def _find_save_via_vdf(app_id: str, save_suffix: Path) -> Path | None:
+    """
+    Parse Steam's libraryfolders.vdf to find save paths in non-standard library locations
+    (e.g. a second drive mounted at /var/mnt/...).
+    """
+    import re
+    home = Path.home()
+    vdf_candidates = [
+        home / '.local/share/Steam/steamapps/libraryfolders.vdf',
+        home / '.steam/steam/steamapps/libraryfolders.vdf',
+        home / '.var/app/com.valvesoftware.Steam/data/Steam/steamapps/libraryfolders.vdf',
+    ]
+    for vdf_path in vdf_candidates:
+        if not vdf_path.exists():
+            continue
+        try:
+            text = vdf_path.read_text(encoding='utf-8', errors='replace')
+            for match in re.finditer(r'"path"\s+"([^"]+)"', text):
+                lib_root = Path(match.group(1))
+                candidate = lib_root / 'steamapps' / 'compatdata' / app_id / save_suffix
+                if candidate.exists():
+                    return candidate
+        except Exception:
+            pass
+    return None
+
+
 def pick_save_interactively() -> Path | None:
     """
     Auto-detect save location and let the user pick Steam ID + character.
@@ -1666,6 +1858,7 @@ def pick_save_interactively() -> Path | None:
         # Linux / Proton — Windrose App ID 3041230 (via PCGamingWiki)
         home = Path.home()
         APP_ID = '3041230'
+        save_suffix = Path('pfx/drive_c/users/steamuser/AppData/Local/R5/Saved/SaveProfiles')
         steam_bases = [
             # Native Steam
             home / '.local/share/Steam/steamapps/compatdata',
@@ -1673,12 +1866,18 @@ def pick_save_interactively() -> Path | None:
             # Flatpak Steam
             home / '.var/app/com.valvesoftware.Steam/data/Steam/steamapps/compatdata',
         ]
-        save_suffix = Path('pfx/drive_c/users/steamuser/AppData/Local/R5/Saved/SaveProfiles')
         for base in steam_bases:
             candidate = base / APP_ID / save_suffix
             if candidate.exists():
                 profiles_root = candidate
                 break
+
+        if not profiles_root:
+            # Failsafe: scan libraryfolders.vdf for non-standard Steam library locations
+            # (e.g. game installed on a second drive mounted at /var/mnt/...)
+            profiles_root = _find_save_via_vdf(APP_ID, save_suffix)
+            if profiles_root:
+                print(f"  [INFO] Found save via libraryfolders.vdf: {profiles_root}")
 
     if not profiles_root or not profiles_root.exists():
         print(f"[ERROR] Could not find save profiles folder automatically.")
@@ -1686,34 +1885,42 @@ def pick_save_interactively() -> Path | None:
         print("    python windrose_save_editor.py <path to Players/GUID folder>")
         return None
 
-    # Find all Steam ID folders (numeric names, not backups)
-    steam_ids = sorted([
-        d for d in profiles_root.iterdir()
-        if d.is_dir() and d.name.isdigit()
-    ])
-
-    if not steam_ids:
-        print(f"[ERROR] No Steam ID folders found in {profiles_root}")
+    # Find all account folders — Steam IDs are numeric, Epic IDs are 32-char hex
+    def _account_type(name: str) -> str | None:
+        if name.isdigit():
+            return 'Steam'
+        if re.fullmatch(r'[0-9a-f]{32}', name.lower()):
+            return 'Epic'
         return None
 
-    # Pick Steam ID
-    if len(steam_ids) == 1:
-        steam_dir = steam_ids[0]
-        print(f"  Steam ID: {steam_dir.name}")
+    accounts = sorted([
+        (d, _account_type(d.name))
+        for d in profiles_root.iterdir()
+        if d.is_dir() and _account_type(d.name) is not None
+    ], key=lambda x: x[0].name)
+
+    if not accounts:
+        print(f"[ERROR] No Steam or Epic account folders found in {profiles_root}")
+        return None
+
+    # Pick account
+    if len(accounts) == 1:
+        account_dir, acct_type = accounts[0]
+        print(f"  {acct_type} account: {account_dir.name}")
     else:
-        print("\n  Steam accounts found:")
-        for i, d in enumerate(steam_ids, 1):
-            print(f"    {i}. {d.name}")
+        print("\n  Accounts found:")
+        for i, (d, acct_type) in enumerate(accounts, 1):
+            print(f"    {i}. [{acct_type}] {d.name}")
         print()
         try:
             choice = int(input("  Select account: ")) - 1
-            steam_dir = steam_ids[choice]
+            account_dir, acct_type = accounts[choice]
         except (ValueError, IndexError):
             print("  Cancelled.")
             return None
 
     # Find Players directory
-    players_root = steam_dir / 'RocksDB' / '0.10.0' / 'Players'
+    players_root = account_dir / 'RocksDB' / '0.10.0' / 'Players'
     if not players_root.exists():
         print(f"[ERROR] Players folder not found: {players_root}")
         return None
@@ -1973,31 +2180,37 @@ def main():
             ok, msg = result if isinstance(result, tuple) else (result, None)
             if ok:
                 modified = True
-                if msg: changelog.append(msg)
-            input('  Press Enter...')
+                if isinstance(msg, list):
+                    changelog.extend(msg)
+                elif msg:
+                    changelog.append(msg)
 
         elif choice == '7':
             result = edit_skills(doc)
             ok, msg = result if isinstance(result, tuple) else (result, None)
             if ok:
                 modified = True
-                if msg: changelog.append(msg)
+                if isinstance(msg, list):
+                    changelog.extend(msg)
+                elif msg:
+                    changelog.append(msg)
 
         elif choice == '_add':
-            print("\n  Enter the ItemParams path for the item to add.")
+            print("\n  Enter Item ID or ItemParams for the item to add.")
+            print("  Item ID example: DA_EID_Armor_Flibustier_Base_Torso")
             print("  Example: /R5BusinessRules/InventoryItems/Equipments/Armor/DA_EID_Armor_Flibustier_Base_Torso.DA_EID_Armor_Flibustier_Base_Torso")
-            print("  (This is shown in the Item ID Guide when you click an item)")
+            print("  (Item IDs are looked up from Item ID Database.html)")
             print()
-            params = input("  ItemParams: ").strip()
-            if not params:
+            raw_item = input("  Item ID / ItemParams: ").strip()
+            if not raw_item:
                 input("  Cancelled. Press Enter…"); continue
 
-            # Auto-fix common copy-paste issues
-            if params and not params.startswith('/'):
-                params = '/' + params
-            if params.startswith('/Plugins/'):
-                params = params[len('/Plugins/'):]
-            params = params.replace('/Content/', '/')
+            params, resolve_msg = resolve_itemparams_from_input(raw_item)
+            if not params:
+                print(f"  {resolve_msg}")
+                input("  Press Enter…"); continue
+            print(f"  {resolve_msg}")
+            print(f"  Resolved ItemParams: {params}")
 
             # Show module capacities to help the user pick
             mods = doc.get('Inventory', {}).get('Modules', {})
@@ -2085,6 +2298,15 @@ def main():
             input("  Press Enter…")
 
         elif choice == 's':
+            sync_fixes = sync_progression_points(doc)
+            if sync_fixes:
+                modified = True
+                for fix in sync_fixes:
+                    changelog.append(f"Fix:     {fix}")
+                print("  [Auto] Synced progression points from node levels:")
+                for fix in sync_fixes:
+                    print(f"    - {fix}")
+                print()
             if not modified:
                 print("  No changes to save.")
                 input("  Press Enter..."); continue
