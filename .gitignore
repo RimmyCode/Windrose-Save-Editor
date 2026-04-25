@@ -1,1 +1,4 @@
 /For Nexus
+
+# Git worktrees
+.worktrees/
