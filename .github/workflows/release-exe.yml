@@ -33,7 +33,10 @@ jobs:
       - name: Fetch RocksDB native library from NuGet
         shell: bash
         run: |
-          curl -sL "https://www.nuget.org/api/v2/package/RocksDB/8.11.3" -o rocksdb.nupkg
+          pkg_version=$(curl -sL "https://api.nuget.org/v3-flatcontainer/rocksdb/index.json" \
+            | python -c "import json,sys; print(json.load(sys.stdin)['versions'][-1])")
+          echo "Using RocksDB NuGet version: ${pkg_version}"
+          curl -sL "https://api.nuget.org/v3-flatcontainer/rocksdb/${pkg_version}/rocksdb.${pkg_version}.nupkg" -o rocksdb.nupkg
           python -c "
           import zipfile
           with zipfile.ZipFile('rocksdb.nupkg') as zf:
@@ -42,7 +45,7 @@ jobs:
               if match is None:
                   match = next((m for m in zf.namelist() if src.split('/')[-1] in m.lower()), None)
               if match is None:
-                  raise SystemExit(f'Library not found in package. Contents: {zf.namelist()}')
+                  raise SystemExit(f'Library not found. Available: {[m for m in zf.namelist() if "native" in m]}')
               data = zf.read(match)
               open('${{ matrix.lib_dest }}', 'wb').write(data)
               print(f'Fetched ${{ matrix.lib_dest }} ({len(data):,} bytes)')
