@@ -1885,34 +1885,42 @@ def pick_save_interactively() -> Path | None:
         print("    python windrose_save_editor.py <path to Players/GUID folder>")
         return None
 
-    # Find all Steam ID folders (numeric names, not backups)
-    steam_ids = sorted([
-        d for d in profiles_root.iterdir()
-        if d.is_dir() and d.name.isdigit()
-    ])
-
-    if not steam_ids:
-        print(f"[ERROR] No Steam ID folders found in {profiles_root}")
+    # Find all account folders — Steam IDs are numeric, Epic IDs are 32-char hex
+    def _account_type(name: str) -> str | None:
+        if name.isdigit():
+            return 'Steam'
+        if re.fullmatch(r'[0-9a-f]{32}', name.lower()):
+            return 'Epic'
         return None
 
-    # Pick Steam ID
-    if len(steam_ids) == 1:
-        steam_dir = steam_ids[0]
-        print(f"  Steam ID: {steam_dir.name}")
+    accounts = sorted([
+        (d, _account_type(d.name))
+        for d in profiles_root.iterdir()
+        if d.is_dir() and _account_type(d.name) is not None
+    ], key=lambda x: x[0].name)
+
+    if not accounts:
+        print(f"[ERROR] No Steam or Epic account folders found in {profiles_root}")
+        return None
+
+    # Pick account
+    if len(accounts) == 1:
+        account_dir, acct_type = accounts[0]
+        print(f"  {acct_type} account: {account_dir.name}")
     else:
-        print("\n  Steam accounts found:")
-        for i, d in enumerate(steam_ids, 1):
-            print(f"    {i}. {d.name}")
+        print("\n  Accounts found:")
+        for i, (d, acct_type) in enumerate(accounts, 1):
+            print(f"    {i}. [{acct_type}] {d.name}")
         print()
         try:
             choice = int(input("  Select account: ")) - 1
-            steam_dir = steam_ids[choice]
+            account_dir, acct_type = accounts[choice]
         except (ValueError, IndexError):
             print("  Cancelled.")
             return None
 
     # Find Players directory
-    players_root = steam_dir / 'RocksDB' / '0.10.0' / 'Players'
+    players_root = account_dir / 'RocksDB' / '0.10.0' / 'Players'
     if not players_root.exists():
         print(f"[ERROR] Players folder not found: {players_root}")
         return None
