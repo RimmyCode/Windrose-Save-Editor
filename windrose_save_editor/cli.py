@@ -43,7 +43,11 @@ from windrose_save_editor.rocksdb import read_wal, scan_sst_for_player
 from windrose_save_editor.save import (
     SaveSession,
     commit_changes,
+    find_accounts,
+    find_player_dirs,
+    find_profiles_root,
     find_wal,
+    peek_player_name,
     resolve_save_dir,
     restore_backup,
     save_backup,
@@ -280,17 +284,84 @@ def _run_skill_editor(session: SaveSession) -> tuple[bool, str | None]:
 # Main entry point
 # ---------------------------------------------------------------------------
 
+
+_USAGE = (
+    "Windrose Save Editor\n"
+    "\n"
+    "Usage:\n"
+    "  python -m windrose_save_editor                  # auto-detect save\n"
+    "  python -m windrose_save_editor <save_directory> # explicit path\n"
+    "\n"
+    "The save_directory should contain: CURRENT, MANIFEST-*, *.sst, *.log\n"
+    "Typically: %LOCALAPPDATA%\\R5\\Saved\\SaveProfiles\\<character_folder>\n"
+)
+
+
+def pick_save_interactively() -> Path | None:
+    profiles_root = find_profiles_root()
+    if not profiles_root:
+        print("[ERROR] Could not find save profiles folder automatically.")
+        print("  Run with a path argument:")
+        print("    Windrose Save Editor.exe <path to Players/GUID folder>")
+        return None
+
+    accounts = find_accounts(profiles_root)
+    if not accounts:
+        print(f"[ERROR] No Steam or Epic account folders found in {profiles_root}")
+        return None
+
+    if len(accounts) == 1:
+        account_dir, acct_type = accounts[0]
+        print(f"  {acct_type} account: {account_dir.name}")
+    else:
+        print("\n  Accounts found:")
+        for i, (d, acct_type) in enumerate(accounts, 1):
+            print(f"    {i}. [{acct_type}] {d.name}")
+        print()
+        try:
+            choice = int(input("  Select account: ")) - 1
+            account_dir, acct_type = accounts[choice]
+        except (ValueError, IndexError):
+            print("  Cancelled.")
+            return None
+
+    player_dirs = find_player_dirs(account_dir)
+    if not player_dirs:
+        print(f"[ERROR] No player saves found in {account_dir}")
+        return None
+
+    if len(player_dirs) == 1:
+        return player_dirs[0]
+
+    print("\n  Characters found:")
+    entries: list[tuple[Path, str]] = []
+    for d in player_dirs:
+        print(f"    Loading {d.name}...", end="\r", flush=True)
+        name = peek_player_name(d)
+        entries.append((d, name))
+        label = f"{d.name}  |  {name}" if name else d.name
+        print(f"    {len(entries)}. {label}          ")
+
+    print()
+    try:
+        choice = int(input("  Select character: ")) - 1
+        return entries[choice][0]
+    except (ValueError, IndexError):
+        print("  Cancelled.")
+        return None
+
+
 def main() -> None:  # noqa: C901 — intentionally long menu dispatch
-    if len(sys.argv) < 2:
-        print(__doc__)
-        sys.exit(1)
-
-    save_dir = Path(sys.argv[1]).resolve()
-    if not save_dir.exists():
-        print(f"[ERROR] Directory not found: {save_dir}")
-        sys.exit(1)
-
-    save_dir = resolve_save_dir(save_dir)
+    if len(sys.argv) >= 2:
+        save_dir = Path(sys.argv[1]).resolve()
+        if not save_dir.exists():
+            print(f"[ERROR] Directory not found: {save_dir}")
+            sys.exit(1)
+        save_dir = resolve_save_dir(save_dir)
+    else:
+        save_dir = pick_save_interactively()
+        if save_dir is None:
+            sys.exit(0)
 
     if not (save_dir / 'CURRENT').exists():
         print("[ERROR] Could not find a save folder (no CURRENT file) under:")
