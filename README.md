@@ -96,6 +96,40 @@ The BSON parser and serialiser are implemented from scratch in pure Python to en
 
 ---
 
+## Development
+
+### Setup
+
+```bash
+git clone <repo>
+cd Windrose-Save-Editor
+pip install -e ".[dev]"
+```
+
+### Running Tests
+
+```bash
+pytest
+```
+
+### Project Structure
+
+```
+windrose_save_editor/
+├── bson/          # BSON parser and serializer (pure Python, no deps)
+├── rocksdb/       # RocksDB WAL/SST/manifest read+write
+├── save/          # Save location, backup, and commit logic
+├── inventory/     # Item reader (ItemRecord) and writer
+├── editors/       # Stat and skill service layer (no UI — testable, GUI-ready)
+├── crc.py         # CRC32C (Castagnoli) — RocksDB checksums
+├── game_data.py   # Talent names, descriptions, stat names
+├── process.py     # Game process detection and shutdown
+└── cli.py         # Interactive menu shell (thin wrapper over service layer)
+```
+
+The `editors/` package is intentionally UI-free — `get_stats`/`set_stat_level` and `get_skills`/`set_skill_level` are pure service functions callable from both the CLI and any future GUI.
+
+---
 ## License
 
 This project is provided as-is for personal use. See the [Nexus Mods page](https://www.nexusmods.com/windrose/mods/153?tab=posts) for terms of use and redistribution details.
