@@ -74,7 +74,13 @@ def scan_sst_for_player(save_dir: Path) -> tuple[bytes, bytes] | None:
             for found in (steam_base / game_folder).rglob("librocksdb.so*"):
                 game_lib_locations.append(found)
 
-    candidates: list[Path] = game_lib_locations + [
+    _bundle_dir: Path | None = Path(sys._MEIPASS) if hasattr(sys, '_MEIPASS') else None
+    _exe_dir = Path(sys.executable).parent
+    _bundle_candidates: list[Path] = []
+    for _d in filter(None, [_bundle_dir, _exe_dir]):
+        _bundle_candidates += [_d / "rocksdb.dll", _d / "librocksdb.so"]
+
+    candidates: list[Path] = game_lib_locations + _bundle_candidates + [
         script_dir / "rocksdb.dll",
         script_dir / "librocksdb.dll",
         script_dir / "librocksdb.so",

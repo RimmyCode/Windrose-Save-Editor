@@ -12,6 +12,7 @@ dependencies = []
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-cov"]
 sst = ["psutil"]
+build = ["pyinstaller>=5"]
 
 [project.scripts]
 windrose-editor = "windrose_save_editor.__main__:main"

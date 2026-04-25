@@ -31,6 +31,10 @@ A Python-based save editor for the game **Windrose**, capable of reading and wri
 
 ## Quick Start
 
+> **No Python?** Download the pre-built `.exe` from the
+> [Nexus Mods page](https://www.nexusmods.com/windrose/mods/153).
+> Just unzip and run `Windrose Save Editor.exe` — no install needed.
+
 ### Auto-detect (recommended)
 
 Run the script with no arguments and it will find your save automatically:
@@ -205,6 +209,19 @@ python -m windrose_save_editor
 ```
 
 This produces `dist/windrose-save-editor-<version>.zip` — the same file that gets uploaded to Nexus Mods.
+
+### Building the standalone exe
+
+Install PyInstaller and build:
+
+```bash
+pip install -e ".[build]"
+./scripts/build-exe.sh
+```
+
+This produces `dist/windrose-save-editor-<version>-exe.zip` containing the self-contained
+`Windrose Save Editor/` directory. Put `rocksdb.dll` (Windows) or `librocksdb.so` (Linux)
+in the same folder before running the spec if you want SST fallback bundled in.
 
 ### Project Structure
 

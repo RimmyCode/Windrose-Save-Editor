@@ -92,4 +92,5 @@ pip install -e ".[dev]"                      # install with dev deps
 pytest                                        # run all tests
 python -m windrose_save_editor <save_path>   # run the editor
 ./scripts/build-release.sh                   # build the Nexus zip
+pip install -e ".[build]" && ./scripts/build-exe.sh  # build standalone exe
 ```
