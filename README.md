@@ -98,64 +98,113 @@ The BSON parser and serialiser are implemented from scratch in pure Python to en
 
 ## Development
 
-### Requirements
+New to Python? No problem — follow these steps in order and you'll be up and running.
 
-- Python 3.10 or newer
-- Git
+---
 
-### Setup
+### Step 1 — Install Python
 
+You need Python 3.10 or newer.
+
+**Check if you already have it:**
+```bash
+python --version
+```
+If it says `Python 3.10` or higher you're good. If not, download it from https://www.python.org/downloads/ and run the installer. On Windows, tick **"Add Python to PATH"** during install.
+
+---
+
+### Step 2 — Get the code
+
+If you have Git installed:
 ```bash
 git clone https://github.com/RimmyCode/Windrose-Save-Editor.git
 cd Windrose-Save-Editor
+```
+
+No Git? Click the green **Code** button on GitHub → **Download ZIP**, then unzip it and open a terminal inside the folder.
+
+---
+
+### Step 3 — Create a virtual environment (recommended)
+
+A virtual environment keeps this project's dependencies separate from the rest of your system — it's just a folder that holds the packages this project needs.
+
+```bash
+python -m venv .venv
+```
+
+Then activate it:
+
+**Windows:**
+```bash
+.venv\Scriptsctivate
+```
+
+**Mac/Linux:**
+```bash
+source .venv/bin/activate
+```
+
+You'll see `(.venv)` appear at the start of your terminal prompt. You only need to do this once per terminal session.
+
+---
+
+### Step 4 — Install dependencies
+
+```bash
 pip install -e ".[dev]"
 ```
 
-This installs the package in editable mode plus the test dependencies (`pytest`, `pytest-cov`).
+This installs the project plus the tools needed to run tests. The `-e` flag means "editable" — changes you make to the code take effect immediately without reinstalling.
 
-For the optional game process detection:
-
+Want the optional game process auto-detection too?
 ```bash
 pip install -e ".[dev,sst]"
 ```
 
-### Running Tests
+---
+
+### Step 5 — Run the tests
 
 ```bash
 pytest
 ```
 
-All 45 tests should pass in under a second. To see individual test names:
+You should see 45 tests pass in under a second. If they all show green you're set up correctly.
 
+To see each test name as it runs:
 ```bash
 pytest -v
 ```
 
-To run a specific module's tests only:
-
+To run just one file's tests:
 ```bash
 pytest tests/test_bson.py
-pytest tests/test_inventory.py
 ```
 
-### Running the Editor Locally
+---
+
+### Running the editor locally
 
 ```bash
-python -m windrose_save_editor "C:\path\to\your\save\folder"
+python -m windrose_save_editor "C:\Users\YourName\AppData\Local\R5\Saved\SaveProfiles"
 ```
 
-Or let it auto-detect your save:
-
+Or let it find your save automatically:
 ```bash
 python -m windrose_save_editor
 ```
 
-### Building the Release Zip
+---
+
+### Building the release zip
 
 ```bash
 ./scripts/build-release.sh
-# output: dist/windrose-save-editor-<version>.zip
 ```
+
+This produces `dist/windrose-save-editor-<version>.zip` — the same file that gets uploaded to Nexus Mods.
 
 ### Project Structure
 
