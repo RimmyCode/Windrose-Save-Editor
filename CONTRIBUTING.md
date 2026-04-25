@@ -1,5 +1,106 @@
 # Contributing to Windrose Save Editor
 
+---
+
+## The short version — read this first
+
+Copy-paste these commands. Do this every time you work on the project.
+
+### Step 1 — Activate your virtual environment (once per terminal session)
+
+**Windows:**
+```
+.venv\Scripts\activate
+```
+**Mac / Linux:**
+```
+source .venv/bin/activate
+```
+You'll see `(.venv)` appear at the start of your prompt. If it's already there, skip this.
+
+---
+
+### Step 2 — Before you change anything, make sure tests are green
+
+```
+pytest
+```
+You should see **45 passed**. If something is already broken before you touched it, stop and flag it.
+
+---
+
+### Step 3 — Write a failing test first
+
+Open the relevant test file in `tests/` and add a test for the thing you're about to build.
+Run it:
+```
+pytest tests/test_inventory.py   ← swap for whichever file matches your change
+```
+It should **fail** right now. That's correct. You haven't written the code yet.
+
+---
+
+### Step 4 — Write the code that makes the test pass
+
+Make the change in the right module (see the **Project tour** section below for where things live).
+Then run the failing test again until it goes green.
+
+---
+
+### Step 5 — Run the full suite to make sure you didn't break anything
+
+```
+pytest
+```
+Must show **45 passed** (or more, if you added new tests). Zero failures, zero errors.
+If something broke that you didn't touch — fix it before committing.
+
+---
+
+### Step 6 — Commit your changes
+
+Stage the files you changed:
+```
+git add windrose_save_editor/inventory/writer.py tests/test_inventory.py
+```
+Write a commit message that says *what* changed and *why* in one line:
+```
+git commit -m "fix: blank_item was hardcoding ItemId instead of generating a new GUID"
+```
+
+---
+
+### Step 7 — Push and open a PR
+
+```
+git push
+```
+Then go to GitHub and open a Pull Request against `main`. Keep the PR to one logical change.
+CI will run the tests on Python 3.10–3.13 automatically — wait for it to go green before asking for a review.
+
+---
+
+### Building the release zip (for Nexus Mods)
+
+```
+./scripts/build-release.sh
+```
+Output: `dist/windrose-save-editor-1.1b.zip`
+
+---
+
+### Building the standalone exe (for users without Python)
+
+```
+pip install -e ".[build]"
+./scripts/build-exe.sh
+```
+Output: `dist/windrose-save-editor-1.1b-exe.zip`
+Put `rocksdb.dll` (Windows) or `librocksdb.so` (Linux) next to `windrose.spec` before running if you want SST fallback bundled in.
+
+---
+
+
 Welcome. This guide walks you through how the project is structured, how to
 make a change the right way, and what to keep in mind before opening a PR.
 
