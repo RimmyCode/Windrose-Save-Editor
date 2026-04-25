@@ -18,6 +18,6 @@ echo "Building Windrose Save Editor ${version} (exe)..."
 pyinstaller --clean windrose.spec
 
 rm -f "${zip_path}"
-(cd "${repo_root}/dist" && zip -r -X "${zip_name}" "Windrose Save Editor")
+(cd "${repo_root}/dist/Windrose Save Editor" && zip -r -X "../${zip_name}" *)
 
 echo "Created ${zip_path}"

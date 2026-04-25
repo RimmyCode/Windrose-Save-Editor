@@ -84,15 +84,15 @@ jobs:
         shell: pwsh
         run: |
           $name = "windrose-save-editor-${{ steps.ver.outputs.version }}-windows.zip"
-          Push-Location dist
-          7z a -tzip $name "Windrose Save Editor"
+          Push-Location "dist\Windrose Save Editor"
+          7z a -tzip "..\$name" *
           Pop-Location
 
       - name: Package (Linux)
         if: matrix.platform == 'linux'
         run: |
           name="windrose-save-editor-${{ steps.ver.outputs.version }}-linux.zip"
-          (cd dist && zip -r -X "$name" "Windrose Save Editor")
+          (cd "dist/Windrose Save Editor" && zip -r -X "../$name" *)
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
