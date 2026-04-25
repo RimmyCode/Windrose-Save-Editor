@@ -98,18 +98,63 @@ The BSON parser and serialiser are implemented from scratch in pure Python to en
 
 ## Development
 
+### Requirements
+
+- Python 3.10 or newer
+- Git
+
 ### Setup
 
 ```bash
-git clone <repo>
+git clone https://github.com/RimmyCode/Windrose-Save-Editor.git
 cd Windrose-Save-Editor
 pip install -e ".[dev]"
+```
+
+This installs the package in editable mode plus the test dependencies (`pytest`, `pytest-cov`).
+
+For the optional game process detection:
+
+```bash
+pip install -e ".[dev,sst]"
 ```
 
 ### Running Tests
 
 ```bash
 pytest
+```
+
+All 45 tests should pass in under a second. To see individual test names:
+
+```bash
+pytest -v
+```
+
+To run a specific module's tests only:
+
+```bash
+pytest tests/test_bson.py
+pytest tests/test_inventory.py
+```
+
+### Running the Editor Locally
+
+```bash
+python -m windrose_save_editor "C:\path\to\your\save\folder"
+```
+
+Or let it auto-detect your save:
+
+```bash
+python -m windrose_save_editor
+```
+
+### Building the Release Zip
+
+```bash
+./scripts/build-release.sh
+# output: dist/windrose-save-editor-<version>.zip
 ```
 
 ### Project Structure
