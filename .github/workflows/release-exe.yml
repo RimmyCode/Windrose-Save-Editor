@@ -3,6 +3,9 @@ name: Build Release Exe
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build (${{ matrix.platform }})
@@ -45,7 +48,7 @@ jobs:
               if match is None:
                   match = next((m for m in zf.namelist() if src.split('/')[-1] in m.lower()), None)
               if match is None:
-                  raise SystemExit(f'Library not found. Available: {[m for m in zf.namelist() if "native" in m]}')
+                  raise SystemExit(f'Library not found. Available: {[m for m in zf.namelist() if \"native\" in m]}')
               data = zf.read(match)
               open('${{ matrix.lib_dest }}', 'wb').write(data)
               print(f'Fetched ${{ matrix.lib_dest }} ({len(data):,} bytes)')
@@ -80,6 +83,55 @@ jobs:
           path: dist/windrose-save-editor-*.zip
           retention-days: 90
 
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Get version
+        id: ver
+        run: |
+          pip install -e "." -q
+          echo "version=$(python -c "from windrose_save_editor import __version__; print(__version__)")" >> $GITHUB_OUTPUT
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${{ steps.ver.outputs.version }}"
+          cat > notes.md << NOTES
+          ## Downloads
+
+          | Platform | File |
+          |----------|------|
+          | **Windows** | \`windrose-save-editor-${version}-windows.zip\` — unzip and run \`Windrose Save Editor.exe\` |
+          | **Linux** (Proton / native) | \`windrose-save-editor-${version}-linux.zip\` |
+
+          No Python required — just unzip and run.
+
+          ---
+
+          For running from source or contributing, see the [README](https://github.com/RimmyCode/Windrose-Save-Editor#quick-start).
+          NOTES
+
+          gh release create "v${version}" \
+            --title "Windrose Save Editor ${version}" \
+            --notes-file notes.md \
+            --latest \
+            release-assets/windrose-save-editor-*.zip
+
       # ── Nexus Mods upload ─────────────────────────────────────────────────
       # To enable:
       #   1. Add NEXUS_API_KEY to repository secrets (Settings → Secrets)
@@ -87,12 +139,11 @@ jobs:
       #   3. Uncomment the step below
       #
       # - name: Upload to Nexus Mods
-      #   if: matrix.platform == 'windows'
       #   env:
       #     NEXUS_API_KEY: ${{ secrets.NEXUS_API_KEY }}
       #   run: |
-      #     v=$(python -c "from windrose_save_editor import __version__; print(__version__)")
+      #     v="${{ steps.ver.outputs.version }}"
       #     python scripts/nexus_upload.py \
-      #       --file "dist/windrose-save-editor-${v}-windows.zip" \
+      #       --file "release-assets/windrose-save-editor-${v}-windows.zip" \
       #       --version "${v}"
       # ─────────────────────────────────────────────────────────────────────
