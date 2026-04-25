@@ -1,7 +1,14 @@
 name: Build Release Exe
 
 on:
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version override (e.g. 1.2b) — leave blank to read from package'
+        required: false
 
 permissions:
   contents: write
@@ -57,24 +64,35 @@ jobs:
       - name: Build exe
         run: pyinstaller --clean windrose.spec
 
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            # Strip leading 'v' from tag name (v1.2b → 1.2b)
+            version="${{ github.ref_name }}"
+            version="${version#v}"
+          elif [[ -n "${{ inputs.version }}" ]]; then
+            version="${{ inputs.version }}"
+          else
+            version=$(python -c "from windrose_save_editor import __version__; print(__version__)")
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
       - name: Package (Windows)
         if: matrix.platform == 'windows'
         shell: pwsh
         run: |
-          $v = python -c "from windrose_save_editor import __version__; print(__version__)"
-          $name = "windrose-save-editor-${v}-windows.zip"
+          $name = "windrose-save-editor-${{ steps.ver.outputs.version }}-windows.zip"
           Push-Location dist
           7z a -tzip $name "Windrose Save Editor"
           Pop-Location
-          "zip_name=$name" | Out-File -Append $env:GITHUB_OUTPUT
 
       - name: Package (Linux)
         if: matrix.platform == 'linux'
         run: |
-          v=$(python -c "from windrose_save_editor import __version__; print(__version__)")
-          name="windrose-save-editor-${v}-linux.zip"
+          name="windrose-save-editor-${{ steps.ver.outputs.version }}-linux.zip"
           (cd dist && zip -r -X "$name" "Windrose Save Editor")
-          echo "zip_name=$name" >> $GITHUB_OUTPUT
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -94,11 +112,19 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Get version
+      - name: Resolve version
         id: ver
         run: |
-          pip install -e "." -q
-          echo "version=$(python -c "from windrose_save_editor import __version__; print(__version__)")" >> $GITHUB_OUTPUT
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            version="${{ github.ref_name }}"
+            version="${version#v}"
+          elif [[ -n "${{ inputs.version }}" ]]; then
+            version="${{ inputs.version }}"
+          else
+            pip install -e "." -q
+            version=$(python -c "from windrose_save_editor import __version__; print(__version__)")
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
 
       - name: Download all build artifacts
         uses: actions/download-artifact@v4
