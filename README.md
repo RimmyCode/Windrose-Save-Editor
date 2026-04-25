@@ -31,6 +31,10 @@ A Python-based save editor for the game **Windrose**, capable of reading and wri
 
 ## Quick Start
 
+> **No Python?** Download the pre-built `.exe` from the
+> [Nexus Mods page](https://www.nexusmods.com/windrose/mods/153).
+> Just unzip and run `Windrose Save Editor.exe` — no install needed.
+
 ### Auto-detect (recommended)
 
 Run the script with no arguments and it will find your save automatically:
@@ -96,6 +100,153 @@ The BSON parser and serialiser are implemented from scratch in pure Python to en
 
 ---
 
+## Development
+
+New to Python? No problem — follow these steps in order and you'll be up and running.
+
+---
+
+### Step 1 — Install Python
+
+You need Python 3.10 or newer.
+
+**Check if you already have it:**
+```bash
+python --version
+```
+If it says `Python 3.10` or higher you're good. If not, download it from https://www.python.org/downloads/ and run the installer. On Windows, tick **"Add Python to PATH"** during install.
+
+---
+
+### Step 2 — Get the code
+
+If you have Git installed:
+```bash
+git clone https://github.com/RimmyCode/Windrose-Save-Editor.git
+cd Windrose-Save-Editor
+```
+
+No Git? Click the green **Code** button on GitHub → **Download ZIP**, then unzip it and open a terminal inside the folder.
+
+---
+
+### Step 3 — Create a virtual environment (recommended)
+
+A virtual environment keeps this project's dependencies separate from the rest of your system — it's just a folder that holds the packages this project needs.
+
+```bash
+python -m venv .venv
+```
+
+Then activate it:
+
+**Windows:**
+```bash
+.venv\Scriptsctivate
+```
+
+**Mac/Linux:**
+```bash
+source .venv/bin/activate
+```
+
+You'll see `(.venv)` appear at the start of your terminal prompt. You only need to do this once per terminal session.
+
+---
+
+### Step 4 — Install dependencies
+
+```bash
+pip install -e ".[dev]"
+```
+
+This installs the project plus the tools needed to run tests. The `-e` flag means "editable" — changes you make to the code take effect immediately without reinstalling.
+
+Want the optional game process auto-detection too?
+```bash
+pip install -e ".[dev,sst]"
+```
+
+---
+
+### Step 5 — Run the tests
+
+```bash
+pytest
+```
+
+You should see 45 tests pass in under a second. If they all show green you're set up correctly.
+
+To see each test name as it runs:
+```bash
+pytest -v
+```
+
+To run just one file's tests:
+```bash
+pytest tests/test_bson.py
+```
+
+---
+
+### Running the editor locally
+
+```bash
+python -m windrose_save_editor "C:\Users\YourName\AppData\Local\R5\Saved\SaveProfiles"
+```
+
+Or let it find your save automatically:
+```bash
+python -m windrose_save_editor
+```
+
+---
+
+### Building the release zip
+
+```bash
+./scripts/build-release.sh
+```
+
+This produces `dist/windrose-save-editor-<version>.zip` — the same file that gets uploaded to Nexus Mods.
+
+### Building the standalone exe
+
+Install PyInstaller and build:
+
+```bash
+pip install -e ".[build]"
+./scripts/build-exe.sh
+```
+
+This produces `dist/windrose-save-editor-<version>-exe.zip` containing the self-contained
+`Windrose Save Editor/` directory. Put `rocksdb.dll` (Windows) or `librocksdb.so` (Linux)
+in the same folder before running the spec if you want SST fallback bundled in.
+
+### Project Structure
+
+```
+windrose_save_editor/
+├── bson/          # BSON parser and serializer (pure Python, no deps)
+├── rocksdb/       # RocksDB WAL/SST/manifest read+write
+├── save/          # Save location, backup, and commit logic
+├── inventory/     # Item reader (ItemRecord) and writer
+├── editors/       # Stat and skill service layer (no UI — testable, GUI-ready)
+├── crc.py         # CRC32C (Castagnoli) — RocksDB checksums
+├── game_data.py   # Talent names, descriptions, stat names
+├── process.py     # Game process detection and shutdown
+└── cli.py         # Interactive menu shell (thin wrapper over service layer)
+```
+
+The `editors/` package is intentionally UI-free — `get_stats`/`set_stat_level` and `get_skills`/`set_skill_level` are pure service functions callable from both the CLI and any future GUI.
+
+---
+## Contributing
+
+See **[CONTRIBUTING.md](CONTRIBUTING.md)** for a full project tour, the TDD-first
+workflow, and where to put new code.
+
+---
 ## License
 
 This project is provided as-is for personal use. See the [Nexus Mods page](https://www.nexusmods.com/windrose/mods/153?tab=posts) for terms of use and redistribution details.

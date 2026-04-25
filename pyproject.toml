@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "windrose-save-editor"
+version = "1.1b"
+description = "Save editor for the game Windrose"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-cov"]
+sst = ["psutil"]
+build = ["pyinstaller>=5"]
+
+[project.scripts]
+windrose-editor = "windrose_save_editor.__main__:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["windrose_save_editor*"]

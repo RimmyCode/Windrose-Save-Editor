@@ -1,0 +1,95 @@
+name: Build Release Exe
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            platform: windows
+            nuget_src: runtimes/win-x64/native/rocksdb.dll
+            lib_dest: rocksdb.dll
+          - runner: ubuntu-latest
+            platform: linux
+            nuget_src: runtimes/linux-x64/native/librocksdb.so
+            lib_dest: librocksdb.so
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -e ".[build]"
+
+      - name: Fetch RocksDB native library from NuGet
+        shell: bash
+        run: |
+          curl -sL "https://www.nuget.org/api/v2/package/RocksDB/8.11.3" -o rocksdb.nupkg
+          python -c "
+          import zipfile
+          with zipfile.ZipFile('rocksdb.nupkg') as zf:
+              src = '${{ matrix.nuget_src }}'.lower()
+              match = next((m for m in zf.namelist() if m.lower() == src), None)
+              if match is None:
+                  match = next((m for m in zf.namelist() if src.split('/')[-1] in m.lower()), None)
+              if match is None:
+                  raise SystemExit(f'Library not found in package. Contents: {zf.namelist()}')
+              data = zf.read(match)
+              open('${{ matrix.lib_dest }}', 'wb').write(data)
+              print(f'Fetched ${{ matrix.lib_dest }} ({len(data):,} bytes)')
+          "
+
+      - name: Build exe
+        run: pyinstaller --clean windrose.spec
+
+      - name: Package (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $v = python -c "from windrose_save_editor import __version__; print(__version__)"
+          $name = "windrose-save-editor-${v}-windows.zip"
+          Push-Location dist
+          7z a -tzip $name "Windrose Save Editor"
+          Pop-Location
+          "zip_name=$name" | Out-File -Append $env:GITHUB_OUTPUT
+
+      - name: Package (Linux)
+        if: matrix.platform == 'linux'
+        run: |
+          v=$(python -c "from windrose_save_editor import __version__; print(__version__)")
+          name="windrose-save-editor-${v}-linux.zip"
+          (cd dist && zip -r -X "$name" "Windrose Save Editor")
+          echo "zip_name=$name" >> $GITHUB_OUTPUT
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windrose-save-editor-${{ matrix.platform }}
+          path: dist/windrose-save-editor-*.zip
+          retention-days: 90
+
+      # ── Nexus Mods upload ─────────────────────────────────────────────────
+      # To enable:
+      #   1. Add NEXUS_API_KEY to repository secrets (Settings → Secrets)
+      #   2. Write scripts/nexus_upload.py using the Nexus Mods API
+      #   3. Uncomment the step below
+      #
+      # - name: Upload to Nexus Mods
+      #   if: matrix.platform == 'windows'
+      #   env:
+      #     NEXUS_API_KEY: ${{ secrets.NEXUS_API_KEY }}
+      #   run: |
+      #     v=$(python -c "from windrose_save_editor import __version__; print(__version__)")
+      #     python scripts/nexus_upload.py \
+      #       --file "dist/windrose-save-editor-${v}-windows.zip" \
+      #       --version "${v}"
+      # ─────────────────────────────────────────────────────────────────────
