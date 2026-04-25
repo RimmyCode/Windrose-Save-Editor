@@ -8,7 +8,7 @@ Wiki: https://windrose.wiki.fextralife.com/Windrose_Wiki
 
 ---
 
-## NEVER (save-editor-specific hard rules)
+## NEVER (hard rules)
 
 ### NEVER write to a save without a backup first
 `save_backup()` must be called before `commit_changes()`. The `SaveSession.backed_up`
@@ -67,18 +67,13 @@ not require Windows.
 
 ---
 
-## Quality gates (from global, applied here)
+## Code standards
 
 - Tests must pass before every commit: `pytest`
-- No function > 50 lines — extract helpers
 - TDD-first: write the test before the implementation
 - Full type hints on all public functions — no bare `dict`, use `BSONDoc`, `ItemRecord`, etc.
 - No bare `except:` — always `except Exception` or more specific
 - `from __future__ import annotations` at the top of every module
-
-### Known exception to the 300-line file rule
-`cli.py` (~767 lines) is intentionally large — it is the complete interactive menu.
-Only split it if adding a major new feature area (e.g. a web UI layer).
 
 ---
 
@@ -93,8 +88,8 @@ Current release on Nexus Mods: `1.1b`.
 ## Running locally
 
 ```bash
-pip install -e ".[dev]"   # install with dev deps
-pytest                     # run all tests
+pip install -e ".[dev]"                      # install with dev deps
+pytest                                        # run all tests
 python -m windrose_save_editor <save_path>   # run the editor
 ./scripts/build-release.sh                   # build the Nexus zip
 ```
