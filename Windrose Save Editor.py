@@ -724,17 +724,15 @@ def get_base_capacity(mod: dict) -> int:
 
 def get_empty_slots(doc: dict, module: int = 0) -> list[int]:
     """
-    Return slot indices safe for adding new items.
-    Only returns expansion slots (index >= base capacity) to avoid
-    conflicting with slots the game pre-allocates and manages itself.
+    Return slot indices that have no item, scanning from index 0 upward
+    through the full capacity of the module.
     """
     mods     = doc.get('Inventory', {}).get('Modules', {})
     mod      = mods.get(str(module), {})
     slots    = mod.get('Slots', {})
     capacity = get_module_capacity(mod)
-    base     = get_base_capacity(mod)
     empty = []
-    for i in range(base, capacity):   # only look above base pre-allocated range
+    for i in range(0, capacity):      # scan all slots from the beginning
         slot = slots.get(str(i))
         if slot is None or not slot_has_item(slot):
             empty.append(i)
@@ -1455,7 +1453,25 @@ def write_via_rocksdb(save_dir: Path, cf_id: int,
     if last_sequence == 0:
         print("  [WARN] Could not read last_sequence from MANIFEST")
         last_sequence = 50000
-    write_seq = last_sequence + 1
+
+    # The MANIFEST is not updated when this editor writes an extra WAL.
+    # If the user saves twice in one editor session, using only the manifest
+    # would reuse the same sequence number and RocksDB may replay batches in
+    # an unsafe/stale order. Scan every existing WAL and advance past the
+    # highest sequence we already wrote or found.
+    max_wal_sequence = 0
+    for existing_log in log_files:
+        try:
+            existing = read_wal(existing_log)
+            if existing is not None:
+                existing_seq, _, _, _, _ = existing
+                max_wal_sequence = max(max_wal_sequence, int(existing_seq))
+        except Exception:
+            # Ignore unrelated/corrupt/non-player WAL fragments; the manifest
+            # sequence is still our safe lower bound.
+            pass
+
+    write_seq = max(last_sequence, max_wal_sequence) + 1
 
     # Write to a NEW file number (current + 1) with the correct sequence.
     # Writing to the EXISTING WAL causes infinite loading because RocksDB
@@ -1761,13 +1777,23 @@ def main():
 
     if result is not None:
         seq, cf_id, player_key, bson_bytes, last_batch_count = result
-        print()
-        print()
-        print("  ⚠  Game is RUNNING — player data read from live WAL.")
-        print()
-        print("  Make your edits, then use option 6 to save.")
-        print("  The editor will guide you through closing the game safely.")
-        print()
+        game_actually_running = False
+        if psutil:
+            for p in psutil.process_iter(['name']):
+                try:
+                    if p.info['name'] in GAME_PROCESS_NAMES:
+                        game_actually_running = True
+                        break
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+        if game_actually_running:
+            print()
+            print()
+            print("  ⚠  Game is RUNNING — player data read from live WAL.")
+            print()
+            print("  Make your edits, then use option 6 to save.")
+            print("  The editor will guide you through closing the game safely.")
+            print()
     else:
         print("  WAL is empty — data has been compacted into SST files.")
         print("  Scanning SST files for player data…")
@@ -1797,19 +1823,34 @@ def main():
         print(f"  1. View inventory")
         print(f"  2. Set Item Level")
         print(f"  3. Set Item Count")
-        print(f"  4. Replace Item")
-        print(f"  5. Stat Editor")
-        print(f"  6. Skill Editor")
-        print(f"  7. Export full save as JSON")
-        print(f"  8. Force-close game")
-        print(f"  9. Save changes")
-        print(f"  A. Restore a backup")
-        print(f"  0. Quit (unsaved changes will be lost)")
+        print(f"  4. Add Item")
+        print(f"  5. Replace Item")
+        print(f"  6. Stat Editor")
+        print(f"  7. Skill Editor")
+        print(f"")
+        print(f"  E. Export save as JSON")
+        print(f"  F. Force-close game")
+        print(f"  S. Save changes")
+        print(f"  R. Restore a backup")
+        print(f"  Q. Quit (unsaved changes will be lost)")
         print(f"")
         print(f"  DEV. Experimental (Do not use)")
         print()
 
         choice = input("  Choice: ").strip().lower()
+
+        if choice == '4':
+            choice = '_add'
+        elif choice == 'dev':
+            print("\n  ⚠  EXPERIMENTAL — Use at your own risk")
+            print("  1. Remove item from inventory")
+            print("  B. Back")
+            print()
+            dev_choice = input("  Choice: ").strip().lower()
+            if dev_choice == '1':
+                choice = '_remove'
+            else:
+                input("  Press Enter…"); continue
 
         if choice == '1':
             items = get_all_items(doc)
@@ -1857,7 +1898,7 @@ def main():
                 print(f"  Invalid input: {e}")
             input("  Press Enter…")
 
-        elif choice == '4':
+        elif choice == '5':
             items = get_all_items(doc)
             print_inventory(items)
             print()
@@ -1927,7 +1968,7 @@ def main():
             modified = True
             input("  Press Enter…")
 
-        elif choice == '5':
+        elif choice == '6':
             result = edit_stats(doc)
             ok, msg = result if isinstance(result, tuple) else (result, None)
             if ok:
@@ -1935,28 +1976,14 @@ def main():
                 if msg: changelog.append(msg)
             input('  Press Enter...')
 
-        elif choice == '6':
+        elif choice == '7':
             result = edit_skills(doc)
             ok, msg = result if isinstance(result, tuple) else (result, None)
             if ok:
                 modified = True
                 if msg: changelog.append(msg)
 
-        elif choice == 'dev':
-            print("\n  ⚠  EXPERIMENTAL — Use at your own risk")
-            print("  1. Add item to inventory")
-            print("  2. Remove item from inventory")
-            print("  B. Back")
-            print()
-            dev_choice = input("  Choice: ").strip().lower()
-            if dev_choice == '1':
-                choice = '_add'
-            elif dev_choice == '2':
-                choice = '_remove'
-            else:
-                input("  Press Enter…"); continue
-
-        if choice == '_add':
+        elif choice == '_add':
             print("\n  Enter the ItemParams path for the item to add.")
             print("  Example: /R5BusinessRules/InventoryItems/Equipments/Armor/DA_EID_Armor_Flibustier_Base_Torso.DA_EID_Armor_Flibustier_Base_Torso")
             print("  (This is shown in the Item ID Guide when you click an item)")
@@ -1986,9 +2013,10 @@ def main():
             print()
 
             try:
-                mod_idx  = int(input("  Module index: "))
-                level    = int(input("  Level (1–15, or 0 if not applicable): "))
-                count    = int(input("  Count (1 for equipment, more for stackables): "))
+                mod_raw = input("  Module index [0]: ").strip()
+                mod_idx = int(mod_raw) if mod_raw else 0
+                level   = int(input("  Level (1–15, or 0 if not applicable): "))
+                count   = int(input("  Count (1 for equipment, more for stackables): "))
             except ValueError:
                 print("  Invalid input.")
                 input("  Press Enter…"); continue
@@ -2035,6 +2063,7 @@ def main():
 
             name = params.split('/')[-1].split('.')[0]
             print(f"  ✓ Added '{name}' to module {mod_idx} slot {slot_idx}")
+            changelog.append(f"Add:     {name} -> module {mod_idx} slot {slot_idx}")
             modified = True
             input("  Press Enter…")
 
@@ -2055,7 +2084,7 @@ def main():
                 print(f"  Invalid input: {e}")
             input("  Press Enter…")
 
-        elif choice == '9':
+        elif choice == 's':
             if not modified:
                 print("  No changes to save.")
                 input("  Press Enter..."); continue
@@ -2091,7 +2120,7 @@ def main():
                 traceback.print_exc()
             input("  Press Enter…")
 
-        elif choice == '7':
+        elif choice == 'e':
             out = save_dir.parent / f"{save_dir.name}_dump_{datetime.now().strftime('%H%M%S')}.json"
             with open(out, 'w', encoding='utf-8') as f:
                 json.dump(doc, f, indent=2, ensure_ascii=False, default=str)
@@ -2099,11 +2128,11 @@ def main():
             input("  Press Enter…")
 
 
-        elif choice == '8':
+        elif choice == 'f':
             kill_game()
             input('  Press Enter...')
 
-        elif choice == 'a':
+        elif choice == 'r':
             confirm = input('  Replace current save with a backup? [y/N]: ').strip().lower()
             if confirm == 'y':
                 if restore_backup(save_dir):
@@ -2112,7 +2141,7 @@ def main():
             input('  Press Enter...')
 
 
-        elif choice == '0':
+        elif choice == 'q':
             if modified:
                 confirm = input('  Unsaved changes will be lost. Quit anyway? [y/N] ').strip().lower()
                 if confirm != 'y': continue
