@@ -12,6 +12,7 @@ dependencies = []
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-cov"]
 sst = ["psutil"]
+gui = ["PySide6>=6.6"]
 build = ["pyinstaller>=5"]
 
 [project.scripts]
