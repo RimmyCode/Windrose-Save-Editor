@@ -37,6 +37,31 @@ def get_stats(doc: BSONDoc) -> list[StatEntry]:
     return entries
 
 
+def max_all_stats(doc: BSONDoc) -> list[str]:
+    """Set every stat node to its MaxNodeLevel. Returns a changelog entry per change."""
+    pp = get_progression(doc)
+    st = pp.get('StatTree', {})
+    nodes = st.get('Nodes', {})
+    changes: list[str] = []
+    for k, v in nodes.items():
+        if not isinstance(v, dict):
+            continue
+        nd = v.get('NodeData', {})
+        max_level = int(nd.get('MaxNodeLevel', 60))
+        old = int(v.get('NodeLevel', 0))
+        if old < max_level:
+            v['NodeLevel'] = max_level
+            name = STAT_NAMES.get(
+                (list(nd.get('Perks', {}).values()) or [''])[0].split('/')[-1].split('.')[0],
+                f'Node{k}',
+            )
+            changes.append(f"Stat maxed: {name} {old} -> {max_level}")
+    st['ProgressionPoints'] = sum(
+        int(n.get('NodeLevel', 0)) for n in nodes.values() if isinstance(n, dict)
+    )
+    return changes
+
+
 def set_stat_level(doc: BSONDoc, node_key: str, level: int) -> None:
     """Clamp level to [0, max_level] and write it back into doc in-place.
 

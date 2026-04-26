@@ -22,12 +22,20 @@ from windrose_save_editor.bson.types import BSONArray, BSONDoc
 from windrose_save_editor.editors import (
     StatEntry,
     get_stats,
+    max_all_stats,
     set_stat_level,
     SkillEntry,
     get_skills,
+    max_all_skills,
     set_skill_level,
 )
-from windrose_save_editor.game_data import SKILL_CATEGORIES, TALENT_DESCS
+from windrose_save_editor.editors.utilities import (
+    apply_candidates,
+    count_save_nodes,
+    scan_candidates,
+)
+from windrose_save_editor.editors.rarity import apply_upgrades, preview_upgrades
+from windrose_save_editor.game_data import RARITY_LABELS, SKILL_CATEGORIES, TALENT_DESCS
 from windrose_save_editor.inventory import (
     ItemRecord,
     get_all_items,
@@ -37,7 +45,13 @@ from windrose_save_editor.inventory import (
     blank_item,
     blank_slot_with_item,
     new_item_guid,
+    ensure_equipment_integrity,
+    max_all_levels,
+    max_safe_stacks,
+    get_ship_items,
+    max_ship_levels,
 )
+from windrose_save_editor.save.item_db import load_item_db
 from windrose_save_editor.process import kill_game
 from windrose_save_editor.rocksdb import read_wal, scan_sst_for_player
 from windrose_save_editor.save import (
@@ -98,41 +112,44 @@ def _fix_item_params(params: str) -> str:
 # Stat editor
 # ---------------------------------------------------------------------------
 
-def _run_stat_editor(session: SaveSession) -> tuple[bool, str | None]:
-    """Interactive stat editor. Returns (changed, changelog_entry)."""
-    print("\n  === STAT EDITOR ===")
-    print()
+def _run_stat_editor(session: SaveSession) -> tuple[bool, list[str]]:
+    """Interactive stat editor — loops until the user returns. Returns (changed, changelog_entries)."""
+    changed = False
+    changes: list[str] = []
 
-    stats = get_stats(session.doc)
-    for i, entry in enumerate(stats, 1):
-        print(f"  {i}. {entry.name:<14}  {entry.level}/{entry.max_level}")
+    while True:
+        print("\n  === STAT EDITOR ===")
+        print()
+        stats = get_stats(session.doc)
+        for i, entry in enumerate(stats, 1):
+            print(f"  {i}. {entry.name:<14}  {entry.level}/{entry.max_level}")
+        print()
+        choice = input("  Stat # to edit (or Enter to go back): ").strip()
+        if not choice:
+            return changed, changes
 
-    print()
-    choice = input("  Stat # to edit (or Enter to go back): ").strip()
-    if not choice:
-        return False, None
+        try:
+            idx = int(choice) - 1
+            stat = stats[idx]
+        except (ValueError, IndexError):
+            print("  Invalid choice.")
+            input("  Press Enter..."); continue
 
-    try:
-        idx = int(choice) - 1
-        stat = stats[idx]
-    except (ValueError, IndexError):
-        print("  Invalid choice.")
-        input("  Press Enter..."); return False, None
+        try:
+            new_lvl = int(input(
+                f"  New level for {stat.name} (current: {stat.level}, max: {stat.max_level}): "
+            ))
+        except ValueError:
+            print("  Invalid level.")
+            input("  Press Enter..."); continue
 
-    try:
-        new_lvl = int(input(
-            f"  New level for {stat.name} (current: {stat.level}, max: {stat.max_level}): "
-        ))
-    except ValueError:
-        print("  Invalid level.")
-        input("  Press Enter..."); return False, None
-
-    old_lvl = stat.level
-    set_stat_level(session.doc, stat.node_key, new_lvl)
-    # Reflect clamped value back for the success message
-    clamped = max(0, min(new_lvl, stat.max_level))
-    print(f"  -> {stat.name} -> {clamped}/{stat.max_level}")
-    return True, f"Stat: {stat.name} {old_lvl} -> {clamped}"
+        old_lvl = stat.level
+        set_stat_level(session.doc, stat.node_key, new_lvl)
+        clamped = max(0, min(new_lvl, stat.max_level))
+        print(f"  -> {stat.name} -> {clamped}/{stat.max_level}")
+        changed = True
+        changes.append(f"Stat: {stat.name} {old_lvl} -> {clamped}")
+        input("  Press Enter...")
 
 
 # ---------------------------------------------------------------------------
@@ -192,9 +209,10 @@ def _create_skill_node(
     return new_k
 
 
-def _run_skill_editor(session: SaveSession) -> tuple[bool, str | None]:
+def _run_skill_editor(session: SaveSession) -> tuple[bool, list[str]]:
     """Interactive skill editor with category sub-menu."""
     cats = list(SKILL_CATEGORIES.items())
+    changes: list[str] = []
 
     while True:
         print("\n  === SKILL EDITOR ===")
@@ -206,7 +224,7 @@ def _run_skill_editor(session: SaveSession) -> tuple[bool, str | None]:
 
         cat_choice = input("  Category: ").strip().lower()
         if cat_choice == 'b':
-            return False, None
+            return bool(changes), changes
 
         try:
             cat_key, cat_info = cats[int(cat_choice) - 1]
@@ -275,9 +293,10 @@ def _run_skill_editor(session: SaveSession) -> tuple[bool, str | None]:
 
             clamped = max(0, min(new_lvl, entry.max_level))
             print(f"  -> {entry.name} -> {clamped}/{entry.max_level}")
-            return True, f"Skill: {entry.name} {old_lvl} -> {clamped}"
+            changes.append(f"Skill: {entry.name} {old_lvl} -> {clamped}")
+            input("  Press Enter...")
 
-    return False, None
+    return bool(changes), changes
 
 
 # ---------------------------------------------------------------------------
@@ -445,8 +464,10 @@ def main() -> None:  # noqa: C901 — intentionally long menu dispatch
         print("  5. Replace Item")
         print("  6. Stat Editor")
         print("  7. Skill Editor")
+        print("  8. Bulk / Quick-Max")
         print("")
         print("  E. Export save as JSON (For inspection)")
+        print("  P. Save Report")
         print("  F. Force-close game")
         print("  S. Save changes")
         print("  R. Restore a backup")
@@ -635,22 +656,196 @@ def main() -> None:  # noqa: C901 — intentionally long menu dispatch
         # Option 6 — Stat editor
         # ------------------------------------------------------------------
         elif choice == '6':
-            changed, msg = _run_stat_editor(session)
+            changed, msgs = _run_stat_editor(session)
             if changed:
                 session.modified = True
-                if msg:
-                    changelog.append(msg)
+                changelog.extend(msgs)
             input("  Press Enter...")
 
         # ------------------------------------------------------------------
         # Option 7 — Skill editor
         # ------------------------------------------------------------------
         elif choice == '7':
-            changed, msg = _run_skill_editor(session)
+            changed, msgs = _run_skill_editor(session)
             if changed:
                 session.modified = True
-                if msg:
-                    changelog.append(msg)
+                changelog.extend(msgs)
+
+        # ------------------------------------------------------------------
+        # Option 8 — Bulk / Quick-Max submenu
+        # ------------------------------------------------------------------
+        elif choice == '8':
+            while True:
+                _print_header(session)
+                print()
+                print("  === BULK / QUICK-MAX ===")
+                print()
+                print("  1. Max All Stats")
+                print("  2. Max All Skills")
+                print("  3. Max Inventory Levels")
+                print("  4. Safe Max Stacks  (stackables only)")
+                print("  5. Max All Items    (levels + stacks)")
+                print("  6. Ship Equipment")
+                print("  7. Map / Recipe Scanner")
+                print("  8. Rarity Upgrade")
+                print()
+                print("  B. Back")
+                print()
+                bulk_choice = input("  Choice: ").strip().lower()
+
+                if bulk_choice == 'b':
+                    break
+
+                # 1 — Max All Stats
+                elif bulk_choice == '1':
+                    msgs = max_all_stats(session.doc)
+                    session.modified = True
+                    changelog.extend(msgs)
+                    print(f"  -> Maxed {len(msgs)} stat(s).")
+                    input("  Press Enter...")
+
+                # 2 — Max All Skills
+                elif bulk_choice == '2':
+                    print()
+                    cats_bulk = list(SKILL_CATEGORIES.items())
+                    print("  Category (or Enter for all):")
+                    for ci, (_, cinfo) in enumerate(cats_bulk, 1):
+                        print(f"    {ci}. {cinfo['label']}")
+                    cat_raw = input("  Category [all]: ").strip()
+                    cat_filter: str | None = None
+                    if cat_raw:
+                        try:
+                            cat_filter = cats_bulk[int(cat_raw) - 1][0]
+                        except (ValueError, IndexError):
+                            pass
+                    msgs = max_all_skills(session.doc, cat_filter)
+                    session.modified = True
+                    changelog.extend(msgs)
+                    print(f"  -> Maxed {len(msgs)} skill(s).")
+                    input("  Press Enter...")
+
+                # 3 — Max Inventory Levels
+                elif bulk_choice == '3':
+                    msgs = max_all_levels(session.doc)
+                    session.modified = True
+                    changelog.extend(msgs)
+                    print(f"  -> {len(msgs)} item(s) leveled to max.")
+                    input("  Press Enter...")
+
+                # 4 — Safe Max Stacks
+                elif bulk_choice == '4':
+                    changed_cnt, skipped_cnt, fixed_cnt = max_safe_stacks(session.doc)
+                    if changed_cnt or fixed_cnt:
+                        session.modified = True
+                        changelog.append(
+                            f"Safe Max Stacks: {changed_cnt} maxed, {skipped_cnt} skipped, {fixed_cnt} fixed"
+                        )
+                    print(f"  -> {changed_cnt} stack(s) maxed, {skipped_cnt} skipped, {fixed_cnt} fixed.")
+                    input("  Press Enter...")
+
+                # 5 — Max All Items
+                elif bulk_choice == '5':
+                    msgs = max_all_levels(session.doc)
+                    changed_cnt, skipped_cnt, fixed_cnt = max_safe_stacks(session.doc)
+                    session.modified = True
+                    changelog.extend(msgs)
+                    if changed_cnt or fixed_cnt:
+                        changelog.append(
+                            f"Safe Max Stacks: {changed_cnt} maxed, {skipped_cnt} skipped"
+                        )
+                    print(f"  -> {len(msgs)} leveled, {changed_cnt} stacks maxed.")
+                    input("  Press Enter...")
+
+                # 6 — Ship Equipment
+                elif bulk_choice == '6':
+                    ship_items = get_ship_items(session.doc)
+                    if not ship_items:
+                        print("  No ship items found.")
+                        input("  Press Enter..."); continue
+                    _print_inventory(ship_items)
+                    print()
+                    print("  M. Max all ship levels  |  B. Back")
+                    ship_action = input("  Choice: ").strip().lower()
+                    if ship_action == 'm':
+                        msgs = max_ship_levels(session.doc)
+                        session.modified = True
+                        changelog.extend(msgs)
+                        print(f"  -> {len(msgs)} ship item(s) maxed.")
+                    input("  Press Enter...")
+
+                # 7 — Map / Recipe Scanner
+                elif bulk_choice == '7':
+                    print()
+                    print("  1. Map fog / discovery")
+                    print("  2. Recipe / crafting")
+                    mode_raw = input("  Mode: ").strip()
+                    mode = 'map' if mode_raw == '1' else 'recipe' if mode_raw == '2' else None
+                    if not mode:
+                        print("  Invalid choice.")
+                        input("  Press Enter..."); continue
+                    print("  Scanning...", end='', flush=True)
+                    candidates = scan_candidates(session.doc, mode=mode)
+                    print(f" {len(candidates)} field(s) found.")
+                    if not candidates:
+                        print("  Nothing to update.")
+                        input("  Press Enter..."); continue
+                    for cand in candidates[:10]:
+                        print(f"    {cand['path_str']}: {cand['old']!r} -> {cand['new']!r}")
+                    if len(candidates) > 10:
+                        print(f"    ... and {len(candidates) - 10} more")
+                    print()
+                    confirm_scan = input(
+                        f"  Apply all {len(candidates)} update(s)? [Y/n]: "
+                    ).strip().lower()
+                    if confirm_scan in ('', 'y', 'yes'):
+                        applied_scan, skipped_scan = apply_candidates(session.doc, candidates)
+                        session.modified = True
+                        label = 'Map' if mode == 'map' else 'Recipe'
+                        changelog.append(f"{label} Scanner: {applied_scan} updated, {skipped_scan} skipped")
+                        print(f"  -> {applied_scan} updated, {skipped_scan} skipped.")
+                    input("  Press Enter...")
+
+                # 8 — Rarity Upgrade
+                elif bulk_choice == '8':
+                    print()
+                    print("  Target rarity:")
+                    print("  0. Highest Available (default)")
+                    for ri, rl in enumerate(RARITY_LABELS, 1):
+                        print(f"  {ri}. {rl}")
+                    rarity_raw = input("  Choice [0]: ").strip()
+                    if rarity_raw in ('', '0'):
+                        target_rarity = 'Highest Available'
+                    else:
+                        try:
+                            target_rarity = RARITY_LABELS[int(rarity_raw) - 1]
+                        except (ValueError, IndexError):
+                            print("  Invalid choice.")
+                            input("  Press Enter..."); continue
+                    print("  Scanning inventory...", end='', flush=True)
+                    rarity_rows = preview_upgrades(session.doc, target_rarity=target_rarity)
+                    upgrades = [r for r in rarity_rows if r['action'] == 'Upgrade']
+                    print(f" {len(upgrades)} upgrade(s) available.")
+                    if not upgrades:
+                        print("  No items eligible for upgrade.")
+                        input("  Press Enter..."); continue
+                    for r in upgrades[:15]:
+                        old_r = r['db_item']['rarity'] if r['db_item'] else '?'
+                        new_r = r['upgrade']['rarity']
+                        print(f"    {r['inv_item']['item_name']}: {old_r} -> {new_r}")
+                    if len(upgrades) > 15:
+                        print(f"    ... and {len(upgrades) - 15} more")
+                    print()
+                    confirm_rar = input(f"  Apply {len(upgrades)} upgrade(s)? [Y/n]: ").strip().lower()
+                    if confirm_rar in ('', 'y', 'yes'):
+                        applied_rar, skipped_rar = apply_upgrades(rarity_rows)
+                        session.modified = True
+                        changelog.append(f"Rarity Upgrade: {applied_rar} upgraded, {skipped_rar} skipped")
+                        print(f"  -> {applied_rar} upgraded, {skipped_rar} skipped.")
+                    input("  Press Enter...")
+
+                else:
+                    print("  Unknown option.")
+                    input("  Press Enter...")
 
         # ------------------------------------------------------------------
         # Option E — Export JSON
@@ -662,6 +857,36 @@ def main() -> None:  # noqa: C901 — intentionally long menu dispatch
             with open(out, 'w', encoding='utf-8') as f:
                 json.dump(session.doc, f, indent=2, ensure_ascii=False, default=str)
             print(f"  -> Exported: {out}")
+            input("  Press Enter...")
+
+        # ------------------------------------------------------------------
+        # Option P — Save Report
+        # ------------------------------------------------------------------
+        elif choice == 'p':
+            total_nodes, primitive_fields = count_save_nodes(session.doc)
+            items = get_all_items(session.doc)
+            stats = get_stats(session.doc)
+            skills_by_cat = get_skills(session.doc)
+            total_skills = sum(len(v) for v in skills_by_cat.values())
+            report = {
+                'player_name': session.doc.get('PlayerName', '?'),
+                'guid': str(session.doc.get('_guid', '?')),
+                'version': str(session.doc.get('_version', '?')),
+                'save_dir': str(session.save_dir),
+                'exported_at': datetime.now().isoformat(),
+                'stats': {s.name: {'level': s.level, 'max': s.max_level} for s in stats},
+                'total_items': len(items),
+                'total_skills': total_skills,
+                'total_save_nodes': total_nodes,
+                'primitive_fields': primitive_fields,
+                'changelog': changelog,
+            }
+            out = session.save_dir.parent / (
+                f"{session.save_dir.name}_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            )
+            with open(out, 'w', encoding='utf-8') as f:
+                json.dump(report, f, indent=2, ensure_ascii=False, default=str)
+            print(f"  -> Report saved: {out}")
             input("  Press Enter...")
 
         # ------------------------------------------------------------------

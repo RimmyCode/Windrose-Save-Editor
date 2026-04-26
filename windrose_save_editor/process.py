@@ -10,7 +10,7 @@ except ImportError:
     _psutil = None  # type: ignore[assignment]
 
 # Game process names to match against (name or cmdline on non-Windows).
-GAME_PROCESS_NAMES: list[str] = ['R5.exe', 'Windrose.exe', 'R5-Win64-Shipping.exe']
+GAME_PROCESS_NAMES: list[str] = ['R5.exe', 'Windrose.exe', 'R5-Win64-Shipping.exe', 'Windrose-Win64-Shipping.exe']
 
 
 def kill_game() -> bool:

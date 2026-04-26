@@ -203,6 +203,72 @@ def get_skills(doc: BSONDoc) -> dict[str, list[SkillEntry]]:
     return result
 
 
+def max_all_skills(doc: BSONDoc, category: str | None = None) -> list[str]:
+    """Set every talent to level 3, creating nodes that don't yet exist in the save.
+
+    If *category* is given (e.g. ``"Fencer"``), only that category is processed.
+    Returns a changelog entry per change.
+    """
+    pp = get_progression(doc)
+    tt = pp.get('TalentTree', {})
+    nodes = tt.setdefault('Nodes', {})
+
+    # Build perk-path → node lookup so we can detect what already exists.
+    save_node_by_perk: dict[str, tuple[str, dict, dict]] = {}
+    for k, v in nodes.items():
+        if not isinstance(v, dict):
+            continue
+        nd = v.get('NodeData', {})
+        perks = nd.get('Perks', {})
+        if perks:
+            save_node_by_perk[list(perks.values())[0]] = (k, v, nd)
+
+    cats = [category] if category else list(_ALL_TALENTS.keys())
+    changes: list[str] = []
+
+    for cat in cats:
+        for suffix in _ALL_TALENTS.get(cat, []):
+            perk_path = _talent_perk_path(cat, suffix)
+            talent_key = f"Talent_{cat}_{suffix}"
+            name = TALENT_NAMES.get(talent_key, suffix)
+
+            if perk_path in save_node_by_perk:
+                k, v, nd = save_node_by_perk[perk_path]
+                old = int(v.get('NodeLevel', 0))
+                if old < 3:
+                    v['NodeLevel'] = 3
+                    v['ActivePerk'] = perk_path
+                    changes.append(f"Skill maxed: {name} {old} -> 3")
+            else:
+                da = f"DA_Talent_{cat}_{suffix}"
+                meta = _TALENT_NODE_DATA.get(da, {})
+                new_k = str(max((int(x) for x in nodes.keys()), default=-1) + 1)
+                perks_arr = BSONArray({'0': perk_path})
+                new_node: dict = {
+                    'ActivePerk': perk_path,
+                    'NodeData': {
+                        'MaxNodeLevel': 3,
+                        'NodePointsCost': 1,
+                        'Perks': perks_arr,
+                        'Requirements': {
+                            'RequiredPointsByNodeTag': BSONArray({}),
+                            'SearchPolicy': 'All',
+                        },
+                        'UISlotTag': {'TagName': meta.get('UISlotTag', '')},
+                    },
+                    'NodeKey': {'TagName': f"Talent.Tree.{cat}.{suffix}"},
+                    'NodeLevel': 3,
+                }
+                nodes[new_k] = new_node
+                save_node_by_perk[perk_path] = (new_k, new_node, new_node['NodeData'])
+                changes.append(f"Skill created+maxed: {name} -> 3")
+
+    tt['ProgressionPoints'] = sum(
+        int(n.get('NodeLevel', 0)) for n in nodes.values() if isinstance(n, dict)
+    )
+    return changes
+
+
 def set_skill_level(doc: BSONDoc, node_key: str, level: int) -> None:
     """Clamp level to [0, max_level] and write it back into doc in-place.
 

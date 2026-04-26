@@ -105,3 +105,118 @@ STAT_NAMES: dict[str, str] = {
     "DA_Vitality_Stat":  "Vitality",
     "DA_Endurance_Stat": "Endurance",
 }
+
+# Maximum item stack count used by bulk-max operations.
+MAX_STACK_COUNT: int = 99_999
+
+# Maps every known ItemType tag to whether it is safe to stack in bulk.
+# False = equipment / jewelry / ship / quest / NPC / reputation — do not touch count.
+# True  = consumable / ammo / resource / currency — safe to raise count.
+ITEM_TYPE_CAN_STACK: dict[str, bool] = {
+    "Inventory.ItemType.Ammo.Cannonball":                 True,
+    "Inventory.ItemType.Ammo.GunFireProjectile":          True,
+    "Inventory.ItemType.Ammo.Gunpowder":                  True,
+    "Inventory.ItemType.Armor.Feets":                     False,
+    "Inventory.ItemType.Armor.Hands":                     False,
+    "Inventory.ItemType.Armor.Head":                      False,
+    "Inventory.ItemType.Armor.Legs":                      False,
+    "Inventory.ItemType.Armor.Torso":                     False,
+    "Inventory.ItemType.Consumable.Bandage":              True,
+    "Inventory.ItemType.Consumable.Elixir":               True,
+    "Inventory.ItemType.Consumable.Fish":                 True,
+    "Inventory.ItemType.Consumable.Food":                 True,
+    "Inventory.ItemType.Consumable.Lantern":              False,
+    "Inventory.ItemType.Consumable.Lootable":             True,
+    "Inventory.ItemType.Consumable.Ship":                 True,
+    "Inventory.ItemType.Currency":                        True,
+    "Inventory.ItemType.Invisible":                       False,
+    "Inventory.ItemType.Invisible.Reputation.Brethren":   False,
+    "Inventory.ItemType.Invisible.Reputation.Buccaneers": False,
+    "Inventory.ItemType.Invisible.Reputation.Civilians":  False,
+    "Inventory.ItemType.Invisible.Reputation.Smugglers":  False,
+    "Inventory.ItemType.Jewelry.Backpack":                False,
+    "Inventory.ItemType.Jewelry.Necklace":                False,
+    "Inventory.ItemType.Jewelry.Ring":                    False,
+    "Inventory.ItemType.NPC.AlchemyStation":              False,
+    "Inventory.ItemType.NPC.Bonfire.Cook":                False,
+    "Inventory.ItemType.NPC.EquipmentStation":            False,
+    "Inventory.ItemType.NPC.Millstone":                   False,
+    "Inventory.ItemType.NPC.Quest":                       False,
+    "Inventory.ItemType.Quest":                           False,
+    "Inventory.ItemType.Quest.Notes":                     False,
+    "Inventory.ItemType.Quest.Other":                     False,
+    "Inventory.ItemType.Quest.Recipe":                    False,
+    "Inventory.ItemType.Resource":                        True,
+    "Inventory.ItemType.Ship.Customization.Figurehead":   False,
+    "Inventory.ItemType.Ship.Customization.Flag":         False,
+    "Inventory.ItemType.Ship.Customization.HullColor":    False,
+    "Inventory.ItemType.Ship.Customization.Sail":         False,
+    "Inventory.ItemType.Ship.Customization.Stern":        False,
+    "Inventory.ItemType.Ship.Equipment.Cannon.Big":       False,
+    "Inventory.ItemType.Ship.Equipment.Cannon.Small":     False,
+    "Inventory.ItemType.Ship.Equipment.Cannon.Universal": False,
+    "Inventory.ItemType.Ship.Equipment.CombatOrders":     False,
+    "Inventory.ItemType.Ship.Equipment.CrewPower":        False,
+    "Inventory.ItemType.Ship.Equipment.Hull":             False,
+    "Inventory.ItemType.Ship.Equipment.RiggingType":      False,
+    "Inventory.ItemType.Weapon.MainHand":                 False,
+    "Inventory.ItemType.Weapon.OffHand":                  False,
+    "Inventory.ItemType.Weapon.TwoHands":                 False,
+}
+
+# ItemType tags that support a Level attribute (equipment + ship equipment + jewelry).
+ITEM_TYPE_CAN_LEVEL: set[str] = {
+    "Inventory.ItemType.Armor.Feets",
+    "Inventory.ItemType.Armor.Hands",
+    "Inventory.ItemType.Armor.Head",
+    "Inventory.ItemType.Armor.Legs",
+    "Inventory.ItemType.Armor.Torso",
+    "Inventory.ItemType.Jewelry.Necklace",
+    "Inventory.ItemType.Jewelry.Ring",
+    "Inventory.ItemType.Ship.Equipment.Cannon.Big",
+    "Inventory.ItemType.Ship.Equipment.Cannon.Small",
+    "Inventory.ItemType.Ship.Equipment.Cannon.Universal",
+    "Inventory.ItemType.Ship.Equipment.CombatOrders",
+    "Inventory.ItemType.Ship.Equipment.CrewPower",
+    "Inventory.ItemType.Ship.Equipment.Hull",
+    "Inventory.ItemType.Ship.Equipment.RiggingType",
+    "Inventory.ItemType.Weapon.MainHand",
+    "Inventory.ItemType.Weapon.OffHand",
+    "Inventory.ItemType.Weapon.TwoHands",
+}
+
+# Rarity system — ordered worst → best.
+RARITY_LABELS: list[str] = ["Common", "Uncommon", "Rare", "Epic", "Legendary"]
+RARITY_VALUE: dict[str, int] = {name: idx for idx, name in enumerate(RARITY_LABELS)}
+RARITY_ORDER: dict[str, int] = {"Legendary": 0, "Epic": 1, "Rare": 2, "Uncommon": 3, "Common": 4}
+RARITY_COLOR: dict[str, str] = {
+    "Legendary": "#f59e0b",
+    "Epic":      "#a855f7",
+    "Rare":      "#3b82f6",
+    "Uncommon":  "#22c55e",
+    "Common":    "#9ca3af",
+}
+
+# Token lists for the heuristic map/recipe scanner.
+MAP_SCAN_TOKENS: tuple[str, ...] = (
+    'map', 'fog', 'fow', 'explor', 'discover', 'visited', 'revealed',
+    'unlocked', 'known', 'fasttravel', 'fast_travel', 'poi', 'location',
+    'marker', 'region', 'island', 'treasuremap',
+)
+MAP_PROTECTED_TOKENS: tuple[str, ...] = (
+    'inventory', 'itemparams', 'itemid', 'attributes', 'talent', 'stat',
+    'slot', 'equipment', 'shipcustomization', 'ship.customization',
+)
+RECIPE_SCAN_TOKENS: tuple[str, ...] = (
+    'recipe', 'craft', 'blueprint', 'schematic', 'formula', 'cookbook',
+    'alchemy', 'crafting',
+)
+RECIPE_PROTECTED_TOKENS: tuple[str, ...] = (
+    'inventory.modules', 'itemparams', 'itemid', 'attributes',
+)
+
+# Keywords used to identify ship items in the inventory.
+SHIP_TOKENS: tuple[str, ...] = (
+    'ship', 'hull', 'sail', 'cannon', 'rigging', 'rudder', 'anchor',
+    'figurehead', 'stern', 'wheel', 'flag',
+)
