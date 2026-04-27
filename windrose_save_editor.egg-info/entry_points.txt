@@ -1,0 +1,2 @@
+[console_scripts]
+windrose-editor = windrose_save_editor.__main__:main

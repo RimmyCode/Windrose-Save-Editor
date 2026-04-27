@@ -1,0 +1,14 @@
+Metadata-Version: 2.4
+Name: windrose-save-editor
+Version: 1.1b0
+Summary: Save editor for the game Windrose
+Requires-Python: >=3.10
+Provides-Extra: dev
+Requires-Dist: pytest>=8; extra == "dev"
+Requires-Dist: pytest-cov; extra == "dev"
+Provides-Extra: sst
+Requires-Dist: psutil; extra == "sst"
+Provides-Extra: gui
+Requires-Dist: PySide6>=6.6; extra == "gui"
+Provides-Extra: build
+Requires-Dist: pyinstaller>=5; extra == "build"

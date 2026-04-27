@@ -1,0 +1,13 @@
+
+[build]
+pyinstaller>=5
+
+[dev]
+pytest>=8
+pytest-cov
+
+[gui]
+PySide6>=6.6
+
+[sst]
+psutil
