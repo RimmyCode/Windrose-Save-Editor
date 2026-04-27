@@ -17,7 +17,6 @@ from PySide6.QtGui import (
 from windrose_save_editor.gui import icons
 
 # ── Layout constants ──────────────────────────────────────────────────────────
-# Math angles: 0° = right, 90° = up (standard).  Screen y-axis is inverted.
 _QUAD_ANGLE: dict[str, float] = {
     "Fencer":   90.0,
     "Crusher":   0.0,
@@ -41,7 +40,6 @@ _C_BADGE_TEXT = QColor("#e8d5a3")
 
 # ── Slot layout data ──────────────────────────────────────────────────────────
 _SLOT_TABLE: list[tuple[str, int, int, int]] = [
-    # Fencer (cat=1)
     ("DA_Talent_Fencer_SlashDamage",                         1, 1, 1),
     ("DA_Talent_Fencer_LessStaminaForDash",                  1, 1, 2),
     ("DA_Talent_Fencer_OneHandedMeleeCritChance",             1, 1, 3),
@@ -49,11 +47,9 @@ _SLOT_TABLE: list[tuple[str, int, int, int]] = [
     ("DA_Talent_Fencer_CritChanceForPerfectBlock",           1, 2, 2),
     ("DA_Talent_Fencer_DamageForSoloEnemy",                  1, 2, 3),
     ("DA_Talent_Fencer_HealForKill",                         1, 3, 2),
-    # 1.3.3 — two perks share one visual node
     ("DA_Talent_Fencer_PassiveReloadBoostForPerfectBlock",   1, 3, 3),
     ("DA_Talent_Fencer_PassiveReloadBoostForPerfectDodge",   1, 3, 3),
     ("DA_Talent_Fencer_ConsecutiveMeleeHitsBonus",           1, 3, 4),
-    # Crusher (cat=2)
     ("DA_Talent_Crusher_CrudeDamage",                        2, 1, 2),
     ("DA_Talent_Crusher_TemporalHPHealBuff",                 2, 1, 3),
     ("DA_Talent_Crusher_TwoHandedDamage",                    2, 2, 1),
@@ -62,20 +58,17 @@ _SLOT_TABLE: list[tuple[str, int, int, int]] = [
     ("DA_Talent_Crusher_Berserk",                            2, 3, 1),
     ("DA_Talent_Crusher_DamageForDeathNearby",               2, 3, 2),
     ("DA_Talent_Crusher_DamageForMultipleTargets",           2, 3, 3),
-    # Marksman (cat=3)
     ("DA_Talent_Marksman_PassiveReloadBonus",                3, 1, 1),
     ("DA_Talent_Marksman_PierceDamage",                      3, 1, 2),
     ("DA_Talent_Marksman_RangeCritDamageBonus",              3, 1, 3),
     ("DA_Talent_Marksman_RangeDamageBonus",                  3, 2, 1),
     ("DA_Talent_Marksman_ActiveReloadSpeedBonus",            3, 2, 2),
-    # 3.2.3 — two perks share one visual node
     ("DA_Talent_Marksman_DamageForDistance",                 3, 2, 3),
     ("DA_Talent_Marksman_DamageForPointBlank",               3, 2, 3),
     ("DA_Talent_Marksman_ConsecutiveRangeHitsBonus",         3, 3, 1),
     ("DA_Talent_Marksman_DamageForAimingState",              3, 3, 2),
     ("DA_Talent_Marksman_ReloadForKill",                     3, 3, 3),
     ("DA_Talent_Marksman_Overpenetration",                   3, 3, 4),
-    # Toughguy (cat=4)
     ("DA_Talent_Toughguy_HealEffectiveness",                 4, 1, 1),
     ("DA_Talent_Toughguy_TempHPForDamageRecivedBonus",       4, 1, 2),
     ("DA_Talent_Toughguy_StaminaBonus",                      4, 1, 3),
@@ -123,10 +116,7 @@ class _SlotInfo:
         for name, desc in zip(self.names, self.descs):
             parts.append(f"<b>{name}</b><br><span style='color:#8b949e'>{desc}</span>")
         body = "<hr style='border-color:#30363d'>".join(parts)
-        level_line = (
-            f"<br><span style='color:#c9a84c'>{self.level} / {self.max_level}</span>"
-        )
-        return body + level_line
+        return body + f"<br><span style='color:#c9a84c'>{self.level} / {self.max_level}</span>"
 
 
 def _build_slots() -> list[_SlotInfo]:
@@ -146,6 +136,64 @@ def _build_slots() -> list[_SlotInfo]:
     return list(index.values())
 
 
+# ── Service layer helpers ─────────────────────────────────────────────────────
+
+def _ensure_skill_node(doc, da_key: str, level: int) -> tuple[str, int]:
+    """
+    Return (node_key, max_level) for da_key, creating the node if absent.
+    Imports service internals to build the correct node structure.
+    """
+    from windrose_save_editor.editors.skills import (
+        _TALENT_NODE_DATA, get_skills,   # type: ignore[attr-defined]
+    )
+    from windrose_save_editor.inventory.reader import get_progression
+    from windrose_save_editor.bson.types import BSONArray
+
+    # Check if the node already exists
+    skills_by_cat = get_skills(doc)
+    for entries in skills_by_cat.values():
+        for entry in entries:
+            if "DA_" + entry._talent_key == da_key:
+                if entry.node_key:
+                    return entry.node_key, entry.max_level
+                # Node missing — create it below
+                perk_path  = entry._perk_path
+                max_level  = entry.max_level
+                category   = entry.category
+                suffix     = entry._talent_key.replace(f"Talent_{category}_", "", 1)
+                node_key_tag = f"Talent.Tree.{category}.{suffix}"
+                meta = _TALENT_NODE_DATA.get(da_key, {})
+                ui_tag = meta.get("UISlotTag", "")
+
+                pp = get_progression(doc)
+                tt = pp.get("TalentTree", {})
+                nodes = tt.setdefault("Nodes", {})
+                new_k = str(max((int(x) for x in nodes.keys()), default=-1) + 1)
+                nodes[new_k] = {
+                    "ActivePerk": perk_path if level > 0 else "",
+                    "NodeData": {
+                        "MaxNodeLevel": max_level,
+                        "NodePointsCost": 1,
+                        "Perks": BSONArray({"0": perk_path}),
+                        "Requirements": {
+                            "RequiredPointsByNodeTag": BSONArray({}),
+                            "SearchPolicy": "All",
+                        },
+                        "UISlotTag": {"TagName": ui_tag},
+                    },
+                    "NodeKey": {"TagName": node_key_tag},
+                    "NodeLevel": level,
+                }
+                tt["ProgressionPoints"] = sum(
+                    int(n.get("NodeLevel", 0))
+                    for n in nodes.values()
+                    if isinstance(n, dict)
+                )
+                return new_k, max_level
+
+    return "", 3
+
+
 # ── TalentNode ────────────────────────────────────────────────────────────────
 
 class TalentNode(QGraphicsObject):
@@ -160,8 +208,7 @@ class TalentNode(QGraphicsObject):
         self._hovered = False
 
     def boundingRect(self) -> QRectF:
-        pad = 6.0
-        r = _NODE_R + pad
+        r = _NODE_R + 6.0
         return QRectF(-r, -r, r * 2, r * 2)
 
     def paint(self, painter: QPainter, _option, _widget) -> None:
@@ -171,7 +218,6 @@ class TalentNode(QGraphicsObject):
         r = _NODE_R
         level, max_lv = self.slot.level, self.slot.max_level
 
-        # Determine visual state
         if level == 0:
             frame_state, icon_opacity = "nonlearn", 0.25
         elif level >= max_lv:
@@ -186,7 +232,6 @@ class TalentNode(QGraphicsObject):
         if not frame_pm.isNull():
             painter.drawPixmap(frame_rect, frame_pm, QRectF(frame_pm.rect()))
         else:
-            # Fallback drawn circle when asset is missing
             col = _C_LOCKED if level == 0 else (_C_MAXED if level >= max_lv else _C_PARTIAL)
             if self._hovered:
                 col = col.lighter(140)
@@ -202,12 +247,11 @@ class TalentNode(QGraphicsObject):
                 icon_r = r * 1.3
                 painter.drawPixmap(
                     QRectF(-icon_r, -icon_r, icon_r * 2, icon_r * 2),
-                    icon_pm,
-                    QRectF(icon_pm.rect()),
+                    icon_pm, QRectF(icon_pm.rect()),
                 )
                 painter.setOpacity(1.0)
 
-        # ── Partial progress arc (teal ring)
+        # ── Partial progress arc (teal)
         if 0 < level < max_lv:
             painter.setPen(QPen(QColor("#4a8fa8"), 2.5))
             painter.setBrush(Qt.BrushStyle.NoBrush)
@@ -275,7 +319,6 @@ class SkillTreeScene(QGraphicsScene):
         self._nodes: dict[tuple[int, int, int], TalentNode] = {}
         self._slots: list[_SlotInfo] = _build_slots()
 
-        # Background image (contains rings, dividers, compass, labels)
         bg_pm = icons.talent_tree_bg(760)
         if not bg_pm.isNull():
             bg_item = self.addPixmap(bg_pm)
@@ -288,36 +331,31 @@ class SkillTreeScene(QGraphicsScene):
         self._draw_nodes()
 
     def _draw_fallback_background(self) -> None:
-        """Minimal fallback rings when the background image file is missing."""
-        ring_pen = QPen(_C_DIV_LINE, 0.8)
+        from PySide6.QtWidgets import QGraphicsEllipseItem
+        pen = QPen(_C_DIV_LINE, 0.8)
         for r in _RING_R.values():
-            from PySide6.QtWidgets import QGraphicsEllipseItem
             item = QGraphicsEllipseItem(QRectF(-r, -r, r * 2, r * 2))
-            item.setPen(ring_pen)
+            item.setPen(pen)
             item.setBrush(Qt.BrushStyle.NoBrush)
             item.setZValue(-5)
             self.addItem(item)
 
     def _draw_connections(self) -> None:
-        conn_pen = QPen(QColor("#1e2a3a"), 0.8)
-        slot_set: set[tuple[int, int, int]] = {
-            (cat, ring, pos) for _, cat, ring, pos in _SLOT_TABLE
-        }
+        pen = QPen(QColor("#1e2a3a"), 0.8)
+        slot_set = {(cat, ring, pos) for _, cat, ring, pos in _SLOT_TABLE}
         for cat, ring, pos in slot_set:
-            # Radial (ring to ring)
             if ring < 3 and (cat, ring + 1, pos) in slot_set:
-                p1 = _slot_pos(cat, ring, pos)
-                p2 = _slot_pos(cat, ring + 1, pos)
-                line = QGraphicsLineItem(QLineF(p1, p2))
-                line.setPen(conn_pen)
+                line = QGraphicsLineItem(
+                    QLineF(_slot_pos(cat, ring, pos), _slot_pos(cat, ring + 1, pos))
+                )
+                line.setPen(pen)
                 line.setZValue(-2)
                 self.addItem(line)
-            # Tangential (position to position within same ring)
             if (cat, ring, pos + 1) in slot_set:
-                p1 = _slot_pos(cat, ring, pos)
-                p2 = _slot_pos(cat, ring, pos + 1)
-                line = QGraphicsLineItem(QLineF(p1, p2))
-                line.setPen(conn_pen)
+                line = QGraphicsLineItem(
+                    QLineF(_slot_pos(cat, ring, pos), _slot_pos(cat, ring, pos + 1))
+                )
+                line.setPen(pen)
                 line.setZValue(-2)
                 self.addItem(line)
 
@@ -333,8 +371,6 @@ class SkillTreeScene(QGraphicsScene):
     # ── Public API ────────────────────────────────────────────────────────
 
     def load_skills(self, skills: dict[str, list]) -> None:
-        from windrose_save_editor.editors.skills import SkillEntry
-
         da_to_level: dict[str, int] = {}
         for entries in skills.values():
             for entry in entries:
@@ -360,9 +396,19 @@ class SkillTreeScene(QGraphicsScene):
 # ── Skills tab ────────────────────────────────────────────────────────────────
 
 class SkillsTab(QWidget):
+    """
+    Circular talent tree with a detail panel.
+
+    skill_changed emits a list of changelog strings whenever the
+    service layer modifies the save doc.
+    """
+
+    skill_changed = Signal(list)
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._selected_slot: _SlotInfo | None = None
+        self._session = None           # SaveSession | None
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -370,7 +416,6 @@ class SkillsTab(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # ── Skill tree view
         self._scene = SkillTreeScene()
         self._scene.node_clicked.connect(self._on_node_clicked)
 
@@ -396,9 +441,9 @@ class SkillsTab(QWidget):
         vbox.setContentsMargins(20, 24, 20, 20)
         vbox.setSpacing(12)
 
-        title = QLabel("TALENT DETAILS")
-        title.setObjectName("section-header")
-        vbox.addWidget(title)
+        hdr = QLabel("TALENT DETAILS")
+        hdr.setObjectName("section-header")
+        vbox.addWidget(hdr)
 
         self._name_lbl = QLabel("Select a node")
         self._name_lbl.setWordWrap(True)
@@ -417,6 +462,7 @@ class SkillsTab(QWidget):
         sep.setFrameShape(QFrame.Shape.HLine)
         vbox.addWidget(sep)
 
+        # Level row
         level_row = QHBoxLayout()
         level_row.setSpacing(10)
         lbl = QLabel("Level:")
@@ -448,6 +494,7 @@ class SkillsTab(QWidget):
         self._max_all_btn = QPushButton("Max All Skills")
         self._max_all_btn.setEnabled(False)
         self._max_all_btn.setToolTip("Requires a save to be loaded")
+        self._max_all_btn.clicked.connect(self._on_max_all_skills)
         vbox.addWidget(self._max_all_btn)
 
         vbox.addStretch()
@@ -459,15 +506,16 @@ class SkillsTab(QWidget):
 
         return panel
 
+    # ── Event handlers ────────────────────────────────────────────────────
+
     def _on_node_clicked(self, slot: _SlotInfo) -> None:
         self._selected_slot = slot
         self._name_lbl.setText(slot.primary_name)
-        if len(slot.names) > 1:
-            desc = "\n\n".join(
-                f"{n}:\n{d}" for n, d in zip(slot.names, slot.descs) if d
-            )
-        else:
-            desc = slot.descs[0] if slot.descs else ""
+        desc = (
+            "\n\n".join(f"{n}:\n{d}" for n, d in zip(slot.names, slot.descs) if d)
+            if len(slot.names) > 1
+            else (slot.descs[0] if slot.descs else "")
+        )
         self._desc_lbl.setText(desc)
         self._level_spin.setMaximum(slot.max_level)
         self._level_spin.setValue(slot.level)
@@ -475,11 +523,33 @@ class SkillsTab(QWidget):
         self._max_node_btn.setEnabled(True)
 
     def _on_set_level(self) -> None:
-        if self._selected_slot is None:
+        slot = self._selected_slot
+        if slot is None:
             return
         new_level = self._level_spin.value()
-        self._selected_slot.level = new_level
-        node = self._scene._nodes.get(self._selected_slot.slot_id)
+
+        if self._session is not None:
+            from windrose_save_editor.editors.skills import set_skill_level
+            da_key = slot.da_keys[0] if slot.da_keys else None
+            if da_key:
+                node_key, max_lv = _ensure_skill_node(
+                    self._session.doc, da_key, new_level
+                )
+                if node_key:
+                    set_skill_level(self._session.doc, node_key, new_level)
+                    slot.level = new_level
+                    node = self._scene._nodes.get(slot.slot_id)
+                    if node:
+                        node.update_level(new_level)
+                    self._session.modified = True
+                    self.skill_changed.emit(
+                        [f"Skill: {slot.primary_name} → {new_level}/{slot.max_level}"]
+                    )
+                    return
+
+        # No session — just update the visual
+        slot.level = new_level
+        node = self._scene._nodes.get(slot.slot_id)
         if node:
             node.update_level(new_level)
 
@@ -488,6 +558,16 @@ class SkillsTab(QWidget):
             return
         self._level_spin.setValue(self._selected_slot.max_level)
         self._on_set_level()
+
+    def _on_max_all_skills(self) -> None:
+        if self._session is None:
+            return
+        from windrose_save_editor.editors.skills import max_all_skills, get_skills
+        msgs = max_all_skills(self._session.doc)
+        self._session.modified = True
+        skills = get_skills(self._session.doc)
+        self._scene.load_skills(skills)
+        self.skill_changed.emit(msgs)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -498,10 +578,19 @@ class SkillsTab(QWidget):
 
     # ── Public API ────────────────────────────────────────────────────────
 
+    def set_session(self, session) -> None:
+        """Attach a SaveSession so edits write through to the doc."""
+        self._session = session
+
     def load_skills(self, skills: dict) -> None:
         self._scene.load_skills(skills)
         self._max_all_btn.setEnabled(True)
 
     def clear_skills(self) -> None:
+        self._session = None
         self._scene.clear_skills()
         self._max_all_btn.setEnabled(False)
+        self._max_node_btn.setEnabled(False)
+        self._level_spin.setEnabled(False)
+        self._name_lbl.setText("Select a node")
+        self._desc_lbl.setText("")

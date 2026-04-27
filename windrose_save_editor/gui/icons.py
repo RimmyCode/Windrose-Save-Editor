@@ -13,10 +13,14 @@ _SLOTS = _UI / "Icons" / "Items" / "Slots"
 
 # Talent DA key → icon file stem (for names that don't follow the direct pattern)
 _TALENT_OVERRIDES: dict[str, str] = {
-    "DA_Talent_Fencer_CritChanceForPerfectBlock":    "T_Talent_Fencer_DamageForBlock",
-    "DA_Talent_Toughguy_HealEffectiveness":          "T_Talent_Toughguy_HealEffectivness",
-    "DA_Talent_Crusher_DamageResistWithTwoHandedWpn":"T_Talent_Crusher_DamageResistInAttack",
-    "DA_Talent_Toughguy_MeleeDamageResist":          "T_Talent_Toughguy_PhysicalRangeDamageResist",
+    "DA_Talent_Fencer_CritChanceForPerfectBlock":     "T_Talent_Fencer_DamageForBlock",
+    "DA_Talent_Toughguy_HealEffectiveness":           "T_Talent_Toughguy_HealEffectivness",
+    "DA_Talent_Crusher_DamageResistWithTwoHandedWpn": "T_Talent_Crusher_DamageResistInAttack",
+    "DA_Talent_Toughguy_MeleeDamageResist":           "T_Talent_Toughguy_PhysicalRangeDamageResist",
+    # Deep Impact — no matching file; use the armour-penetration icon (closest concept)
+    "DA_Talent_Marksman_PierceDamage":                "T_Talent_Marksman_RangeArmorPenBonus",
+    # Both "Outnumbered" perks share the same display name; reuse the resist icon for the damage variant
+    "DA_Talent_Toughguy_DamageForManyEnemies":        "T_Talent_Toughguy_ResistForManyEnemies",
 }
 
 _SLOT_STATE_FILES: dict[str, str] = {
