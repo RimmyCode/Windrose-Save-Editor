@@ -85,7 +85,7 @@ class _HeroHeader(QWidget):
         row.addWidget(badge)
         row.addStretch()
 
-        sub = QLabel("Corsair Ember theme by Reisu")
+        sub = QLabel("Community save editor for Windrose (Steam / Epic)")
         sub.setObjectName("hero-sub")
 
         layout.addLayout(row)
