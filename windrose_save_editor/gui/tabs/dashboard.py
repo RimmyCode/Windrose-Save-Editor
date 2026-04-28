@@ -8,6 +8,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 
 from windrose_save_editor import __version__
+from windrose_save_editor.gui.style import C_BORDER, C_GOLD, C_MUTED, C_PANEL2, C_TEXT
 
 # ── Contributor list ─────────────────────────────────────────────────────────
 # Add entries here as (Name, Role/Contribution).
@@ -125,7 +126,7 @@ class _WelcomeCard(_Card):
         )
         body.setWordWrap(True)
         body.setObjectName("muted")
-        body.setStyleSheet("color: #8b949e; line-height: 1.7; font-size: 13px;")
+        body.setStyleSheet(f"color: {C_MUTED}; line-height: 1.7; font-size: 13px;")
 
         self._inner.addWidget(title)
         self._inner.addWidget(body)
@@ -147,13 +148,13 @@ class _QuickstartCard(_Card):
             num.setFixedSize(26, 26)
             num.setAlignment(Qt.AlignmentFlag.AlignCenter)
             num.setStyleSheet(
-                "background-color: #1c2333; color: #c9a84c;"
+                f"background-color: {C_PANEL2}; color: {C_GOLD};"
                 "border-radius: 13px; font-weight: bold; font-size: 12px;"
             )
 
             text = QLabel(step)
             text.setWordWrap(True)
-            text.setStyleSheet("color: #8b949e; font-size: 13px;")
+            text.setStyleSheet(f"color: {C_MUTED}; font-size: 13px;")
             text.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 
             row.addWidget(num)
@@ -173,9 +174,9 @@ class _CreditsCard(_Card):
         # ── Original author line
         author_row = QHBoxLayout()
         author_lbl = QLabel("Original project by:")
-        author_lbl.setStyleSheet("color: #8b949e; font-size: 13px;")
+        author_lbl.setStyleSheet(f"color: {C_MUTED}; font-size: 13px;")
         author_name = QLabel("KHBIN (RimmyCode)")
-        author_name.setStyleSheet("color: #c9a84c; font-weight: bold; font-size: 13px;")
+        author_name.setStyleSheet(f"color: {C_GOLD}; font-weight: bold; font-size: 13px;")
         author_row.addWidget(author_lbl)
         author_row.addWidget(author_name)
         author_row.addStretch()
@@ -184,9 +185,9 @@ class _CreditsCard(_Card):
         # ── Contributors toggle
         self._toggle_btn = QPushButton("▶  Contributors  (%d)" % len(CONTRIBUTORS))
         self._toggle_btn.setStyleSheet(
-            "QPushButton { background: transparent; border: none; color: #8b949e;"
+            f"QPushButton {{ background: transparent; border: none; color: {C_MUTED};"
             "text-align: left; font-size: 12px; padding: 4px 0; }"
-            "QPushButton:hover { color: #c9d1d9; }"
+            f"QPushButton:hover {{ color: {C_TEXT}; }}"
         )
         self._toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._toggle_btn.clicked.connect(self._toggle_contributors)
@@ -201,11 +202,11 @@ class _CreditsCard(_Card):
         for name, role in CONTRIBUTORS:
             row = QHBoxLayout()
             name_lbl = QLabel(name)
-            name_lbl.setStyleSheet("color: #c9d1d9; font-size: 13px;")
+            name_lbl.setStyleSheet(f"color: {C_TEXT}; font-size: 13px;")
             dash = QLabel("—")
-            dash.setStyleSheet("color: #30363d; font-size: 13px;")
+            dash.setStyleSheet(f"color: {C_BORDER}; font-size: 13px;")
             role_lbl = QLabel(role)
-            role_lbl.setStyleSheet("color: #8b949e; font-size: 13px;")
+            role_lbl.setStyleSheet(f"color: {C_MUTED}; font-size: 13px;")
             row.addWidget(name_lbl)
             row.addWidget(dash)
             row.addWidget(role_lbl)

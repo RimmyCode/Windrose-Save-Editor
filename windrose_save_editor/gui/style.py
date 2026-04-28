@@ -1,19 +1,19 @@
 from __future__ import annotations
 
 # Colour palette — matches the professionally commissioned UI
-C_BG         = "#0c0d10"   # main background
-C_PANEL      = "#111318"   # sidebar / panel surfaces
-C_PANEL2     = "#16191f"   # slightly lighter panel (center)
-C_BORDER     = "#1e2229"   # panel borders / dividers
-C_BORDER2    = "#252a33"   # slightly more visible border
-C_TEXT       = "#c9d1d9"   # primary text
-C_MUTED      = "#6b7685"   # muted / secondary text
-C_HEADER     = "#8a9aaa"   # section header text (ALL CAPS labels)
-C_GOLD       = "#c9a84c"   # accent gold (save button, active nodes)
+C_BG         = "#100b08"   # main background
+C_PANEL      = "#1b100a"   # sidebar / panel surfaces
+C_PANEL2     = "#24160f"   # slightly lighter panel (center)
+C_BORDER     = "#3a2417"   # panel borders / dividers
+C_BORDER2    = "#5a351e"   # slightly more visible border
+C_TEXT       = "#f3e4bf"   # primary text
+C_MUTED      = "#cdbb91"   # muted / secondary text
+C_HEADER     = "#e5c76f"   # section header text (ALL CAPS labels)
+C_GOLD       = "#e5c76f"   # accent gold (save button, active nodes)
 C_GOLD_DIM   = "#7a6030"   # dimmed gold
-C_TEAL       = "#4a8fa8"   # partial-node ring / accent teal
-C_RED        = "#c0392b"   # danger / remove
-C_TOPBAR     = "#0a0b0d"   # top bar (darkest)
+C_TEAL       = "#2b7773"   # partial-node ring / accent teal
+C_RED        = "#9e2f27"   # danger / remove
+C_TOPBAR     = "#160d09"   # top bar (darkest)
 
 WINDROSE_DARK = f"""
 /* ── Base ────────────────────────────────────────────────────────── */
@@ -43,6 +43,16 @@ QFrame#left-panel {{ background: {C_PANEL};  border-right:  1px solid {C_BORDER}
 QFrame#right-panel{{ background: {C_PANEL};  border-left:   1px solid {C_BORDER}; }}
 QFrame#card       {{ background: {C_PANEL};  border: 1px solid {C_BORDER}; border-radius: 6px; }}
 QFrame#separator  {{ background: {C_BORDER}; max-height: 1px; min-height: 1px; }}
+QFrame#map-table  {{
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+        stop:0 #2d1c12, stop:0.52 #4a2c18, stop:1 #1a100a);
+    border: 1px solid {C_BORDER2};
+    border-radius: 6px;
+}}
+QFrame#workbench-panel {{
+    background: {C_PANEL};
+    border-top: 1px solid {C_BORDER};
+}}
 
 /* ── Buttons ─────────────────────────────────────────────────────── */
 QPushButton {{
@@ -72,6 +82,24 @@ QPushButton#tab-btn[active="true"] {{
     font-weight: bold;
 }}
 
+QPushButton#map-zone {{
+    background: #5a351e;
+    border: 1px solid {C_BORDER2};
+    border-radius: 4px;
+    color: {C_TEXT};
+    font-weight: bold;
+    padding: 8px 16px;
+}}
+QPushButton#map-zone:hover {{
+    background: #753e20;
+    border-color: {C_GOLD};
+}}
+QPushButton#map-zone[active="true"] {{
+    background: {C_RED};
+    border-color: {C_GOLD};
+    color: {C_TEXT};
+}}
+
 QPushButton#section-expand {{
     background: transparent; border: none;
     color: {C_MUTED}; font-size: 11px;
@@ -98,6 +126,16 @@ QLabel#muted {{ color: {C_MUTED}; font-size: 11px; }}
 QLabel#version {{ color: #2a3240; font-size: 10px; }}
 QLabel#layout-btn {{ color: {C_MUTED}; font-size: 10px; text-decoration: underline; padding: 0 3px; }}
 QLabel#layout-btn[active="true"] {{ color: {C_TEXT}; }}
+QLabel#map-title {{ color: {C_GOLD}; font-size: 13px; font-weight: bold; letter-spacing: 1px; }}
+QLabel#guard-badge {{
+    color: {C_GOLD};
+    background: #33100b08;
+    border: 1px solid {C_BORDER2};
+    border-radius: 9px;
+    padding: 2px 10px;
+    font-size: 10px;
+    font-weight: bold;
+}}
 
 /* ── Inputs ──────────────────────────────────────────────────────── */
 QSpinBox, QLineEdit {{

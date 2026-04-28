@@ -504,6 +504,58 @@ class _TopBar(QFrame):
         return self._bulk_btn
 
 
+class _MapTableNav(QFrame):
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("map-table")
+        self.setFixedHeight(92)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 10, 16, 12)
+        layout.setSpacing(8)
+
+        header = QHBoxLayout()
+        header.setSpacing(10)
+
+        title = QLabel("TREASURE MAP WORKBENCH")
+        title.setObjectName("map-title")
+        header.addWidget(title)
+        header.addStretch(1)
+
+        guard = QLabel("LIVE GUARD ON")
+        guard.setObjectName("guard-badge")
+        header.addWidget(guard)
+        layout.addLayout(header)
+
+        zone_row = QHBoxLayout()
+        zone_row.setSpacing(8)
+        self._zone_btns: dict[str, QPushButton] = {}
+        for key, label in (
+            ("dashboard", "Dashboard"),
+            ("editor", "Character Editor"),
+            ("inventory", "Inventory"),
+            ("skills", "Skills"),
+            ("stats", "Stats"),
+        ):
+            btn = QPushButton(label)
+            btn.setObjectName("map-zone")
+            btn.setProperty("active", "false")
+            btn.setFixedHeight(36)
+            self._zone_btns[key] = btn
+            zone_row.addWidget(btn)
+        layout.addLayout(zone_row)
+
+    @property
+    def zone_buttons(self) -> dict[str, QPushButton]:
+        return self._zone_btns
+
+    def set_active_zone(self, key: str) -> None:
+        for zone_key, btn in self._zone_btns.items():
+            btn.setProperty("active", "true" if zone_key == key else "false")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Left panel — equipment
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1005,10 +1057,14 @@ class MainWindow(QMainWindow):
 
         self._topbar = _TopBar()
         vbox.addWidget(self._topbar)
+        self._map_table = _MapTableNav()
+        vbox.addWidget(self._map_table)
         vbox.addWidget(self._stack_widget(), 1)
 
         # Nav tabs
         for key, btn in self._topbar.tab_buttons.items():
+            btn.clicked.connect(lambda _c, k=key: self._switch_page(k))
+        for key, btn in self._map_table.zone_buttons.items():
             btn.clicked.connect(lambda _c, k=key: self._switch_page(k))
 
         # Open / save / reset / backup / bulk
@@ -1036,7 +1092,8 @@ class MainWindow(QMainWindow):
     # ── Navigation ───────────────────────────────────────────────────────
 
     def _switch_page(self, key: str) -> None:
-        self._topbar.set_active_tab(key)
+        self._topbar.set_active_tab("dashboard" if key == "dashboard" else "editor")
+        self._map_table.set_active_zone(key)
         self._stack.setCurrentIndex(0 if key == "dashboard" else 1)
 
     # ── Open save ────────────────────────────────────────────────────────
