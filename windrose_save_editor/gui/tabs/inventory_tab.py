@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QPushButton, QLabel, QHeaderView, QAbstractItemView, QMenu,
     QInputDialog, QMessageBox, QStackedWidget, QScrollArea, QFrame,
-    QGridLayout, QSizePolicy,
+    QSizePolicy,
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
@@ -28,6 +28,16 @@ _ICON_COLS  = 5
 _ICON_CELL_W = 72
 _ICON_CELL_H = 88
 _ICON_SIZE   = 56
+
+
+class _PersistentCheckMenu(QMenu):
+    """QMenu that stays open when checkable actions are clicked."""
+    def mouseReleaseEvent(self, event) -> None:
+        action = self.activeAction()
+        if action and action.isCheckable():
+            action.trigger()
+            return
+        super().mouseReleaseEvent(event)
 
 
 class _IconCell(QFrame):
@@ -78,6 +88,8 @@ class InventoryTab(QWidget):
         self._session: SaveSession | None = None
         self._items: list[ItemRecord] = []
         self._layout_mode = 'list'
+        self._active_modules: set[int] = {0}
+        self._displayed_items: list[ItemRecord] = []
         self._setup_ui()
 
     # ── Build UI ─────────────────────────────────────────────────────────
@@ -106,6 +118,15 @@ class InventoryTab(QWidget):
             lbl.mousePressEvent = lambda _e, m=mode: self._switch_layout(m)
             self._layout_btns[mode] = lbl
             toolbar.addWidget(lbl)
+
+        _filter_sep = QLabel("|")
+        _filter_sep.setStyleSheet(f"color: {C_BORDER};")
+        toolbar.addWidget(_filter_sep)
+        self._filters_btn = QLabel("filters")
+        self._filters_btn.setObjectName("layout-btn")
+        self._filters_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._filters_btn.mousePressEvent = lambda _e: self._show_filters()
+        toolbar.addWidget(self._filters_btn)
 
         toolbar.addStretch()
 
@@ -167,12 +188,10 @@ class InventoryTab(QWidget):
         self._icon_container.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
         )
-        self._icon_grid = QGridLayout(self._icon_container)
-        self._icon_grid.setContentsMargins(12, 8, 12, 8)
-        self._icon_grid.setSpacing(8)
-        self._icon_grid.setAlignment(Qt.AlignmentFlag.AlignTop)
-        # Phantom stretch column fills remaining horizontal space
-        self._icon_grid.setColumnStretch(_ICON_COLS, 1)
+        self._icon_rows = QVBoxLayout(self._icon_container)
+        self._icon_rows.setContentsMargins(12, 8, 12, 8)
+        self._icon_rows.setSpacing(8)
+        self._icon_rows.setAlignment(Qt.AlignmentFlag.AlignTop)
         self._icon_scroll.setWidget(self._icon_container)
         self._view_stack.addWidget(self._icon_scroll)  # index 1
 
@@ -232,7 +251,8 @@ class InventoryTab(QWidget):
 
     def _populate_table(self) -> None:
         self._table.setRowCount(0)
-        for item in self._items:
+        self._displayed_items = [i for i in self._items if i['module'] in self._active_modules]
+        for item in self._displayed_items:
             row = self._table.rowCount()
             self._table.insertRow(row)
 
@@ -261,34 +281,33 @@ class InventoryTab(QWidget):
             self._table.setItem(row, _COL_COUNT,  qty_cell)
             self._table.setItem(row, _COL_MODULE, mod_cell)
 
-        self._count_lbl.setText(f"{len(self._items)} items")
+        self._count_lbl.setText(f"{len(self._displayed_items)} items")
 
     # ── Populate icon grid ────────────────────────────────────────────────
 
     def _populate_icon_grid(self) -> None:
-        while self._icon_grid.count():
-            child = self._icon_grid.takeAt(0)
+        while self._icon_rows.count():
+            child = self._icon_rows.takeAt(0)
             if child.widget():
-                child.widget().deleteLater()
+                child.widget().setParent(None)
 
-        for idx, item in enumerate(self._items):
-            cell = _IconCell(item)
-            self._icon_grid.addWidget(cell, idx // _ICON_COLS, idx % _ICON_COLS)
-
-        # Fill last row with spacers so cells align left
-        remaining = len(self._items) % _ICON_COLS
-        if remaining:
-            for i in range(_ICON_COLS - remaining):
-                spacer = QWidget()
-                spacer.setFixedSize(_ICON_CELL_W, _ICON_CELL_H)
-                last_row = len(self._items) // _ICON_COLS
-                self._icon_grid.addWidget(spacer, last_row, remaining + i)
+        filtered = [i for i in self._items if i['module'] in self._active_modules]
+        for start in range(0, len(filtered), _ICON_COLS):
+            chunk = filtered[start:start + _ICON_COLS]
+            row_w = QWidget()
+            row_h = QHBoxLayout(row_w)
+            row_h.setContentsMargins(0, 0, 0, 0)
+            row_h.setSpacing(8)
+            for item in chunk:
+                row_h.addWidget(_IconCell(item))
+            row_h.addStretch(1)
+            self._icon_rows.addWidget(row_w)
 
     # ── Selection ─────────────────────────────────────────────────────────
 
     def _on_row_changed(self, row: int) -> None:
-        has_sel = 0 <= row < len(self._items)
-        item    = self._items[row] if has_sel else None
+        has_sel = 0 <= row < len(self._displayed_items)
+        item    = self._displayed_items[row] if has_sel else None
         has_lv  = has_sel and item is not None and item["level"] is not None
         self._set_lv_btn.setEnabled(has_lv)
         self._max_lv_btn.setEnabled(has_lv)
@@ -296,9 +315,45 @@ class InventoryTab(QWidget):
 
     def _selected_item(self) -> ItemRecord | None:
         row = self._table.currentRow()
-        if 0 <= row < len(self._items):
-            return self._items[row]
+        if 0 <= row < len(self._displayed_items):
+            return self._displayed_items[row]
         return None
+
+    # ── Filters ───────────────────────────────────────────────────────────
+
+    def _show_filters(self) -> None:
+        _MODULE_NAMES: dict[int, str] = {
+            0: "Main Inventory",
+            1: "Ammo",
+            2: "Equipment",
+            3: "Action Bar",
+            4: "Jewelry",
+            5: "Quest Items",
+        }
+        present = sorted({i['module'] for i in self._items} | {0})
+        menu = _PersistentCheckMenu(self)
+        for mod_idx in present:
+            name = _MODULE_NAMES.get(mod_idx, f"Module {mod_idx}")
+            action = menu.addAction(f"{name}  (mod {mod_idx})")
+            action.setCheckable(True)
+            action.setChecked(mod_idx in self._active_modules)
+            action.triggered.connect(
+                lambda checked, m=mod_idx: self._toggle_module(m, checked)
+            )
+        menu.exec(self._filters_btn.mapToGlobal(
+            self._filters_btn.rect().bottomLeft()
+        ))
+
+    def _toggle_module(self, mod_idx: int, checked: bool) -> None:
+        if checked:
+            self._active_modules.add(mod_idx)
+        else:
+            self._active_modules.discard(mod_idx)
+            if not self._active_modules:
+                self._active_modules.add(mod_idx)
+        self._populate_table()
+        if self._layout_mode == 'icon':
+            self._populate_icon_grid()
 
     # ── Context menu ──────────────────────────────────────────────────────
 

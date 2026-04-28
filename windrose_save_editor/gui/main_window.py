@@ -40,8 +40,6 @@ _STAT_COLORS: dict[str, str] = {
 # Armor slot names in save-file order (slot 0-4 in Module.Equipment)
 _ARMOR_SLOTS  = ["Head", "Torso", "Legs", "Gloves", "Feet"]
 _ACC_SLOTS    = ["Ring", "Necklace", "Backpack"]
-_MODULE_SLOTS = ["MainHand", "OffHand", "RangedMainHand", "RangedOffHand"]
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Background worker for save
@@ -600,16 +598,16 @@ class _LeftPanel(QFrame):
 
         content = QWidget()
         layout = QVBoxLayout(content)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(16)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(2)
         layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-        layout.addWidget(self._section("MODULES",     _MODULE_SLOTS, cols=2))
+        layout.addWidget(self._build_action_bar_section())
         layout.addWidget(self._build_armor_section())
         layout.addWidget(self._section("ACCESSORIES", _ACC_SLOTS,    cols=3))
 
-        ammo_w, self._ammo_layout = self._make_items_section("AMMO")
-        quest_w, self._quest_layout = self._make_items_section("QUEST ITEMS")
+        ammo_w, self._ammo_grid = self._make_items_section("AMMO")
+        quest_w, self._quest_grid = self._make_items_section("QUEST ITEMS")
         layout.addWidget(ammo_w)
         layout.addWidget(quest_w)
 
@@ -620,7 +618,7 @@ class _LeftPanel(QFrame):
         w = QWidget()
         vbox = QVBoxLayout(w)
         vbox.setContentsMargins(0, 0, 0, 0)
-        vbox.setSpacing(8)
+        vbox.setSpacing(2)
         hdr = QLabel("ARMOR")
         hdr.setObjectName("section-header")
         vbox.addWidget(hdr)
@@ -634,24 +632,40 @@ class _LeftPanel(QFrame):
         vbox.addLayout(grid)
         return w
 
-    @staticmethod
-    def _make_items_section(title: str) -> tuple[QWidget, QVBoxLayout]:
+    def _build_action_bar_section(self) -> QWidget:
         w = QWidget()
         vbox = QVBoxLayout(w)
         vbox.setContentsMargins(0, 0, 0, 0)
-        vbox.setSpacing(4)
+        vbox.setSpacing(2)
+        hdr = QLabel("ACTION BAR")
+        hdr.setObjectName("section-header")
+        vbox.addWidget(hdr)
+        grid = QGridLayout()
+        grid.setSpacing(6)
+        self._action_slot_widgets: list[_EquipmentSlot] = []
+        for i in range(8):
+            s = _EquipmentSlot(str(i + 1), size=44)
+            self._action_slot_widgets.append(s)
+            grid.addWidget(s, i // 4, i % 4)
+        vbox.addLayout(grid)
+        return w
+
+    @staticmethod
+    def _make_items_section(title: str) -> tuple[QWidget, QGridLayout]:
+        w = QWidget()
+        vbox = QVBoxLayout(w)
+        vbox.setContentsMargins(0, 0, 0, 0)
+        vbox.setSpacing(2)
         hdr = QLabel(title)
         hdr.setObjectName("section-header")
         vbox.addWidget(hdr)
-        content = QWidget()
-        content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(0, 0, 0, 0)
-        content_layout.setSpacing(2)
+        grid = QGridLayout()
+        grid.setSpacing(6)
         placeholder = QLabel("—")
         placeholder.setObjectName("muted")
-        content_layout.addWidget(placeholder)
-        vbox.addWidget(content)
-        return w, content_layout
+        grid.addWidget(placeholder, 0, 0)
+        vbox.addLayout(grid)
+        return w, grid
 
     # ── Ship page (placeholder) ───────────────────────────────────────────
 
@@ -709,16 +723,29 @@ class _LeftPanel(QFrame):
             else:
                 slot_widget.clear_item()
 
+        action_by_slot = {
+            i['slot']: i for i in items
+            if self._mod_tag(i) == 'Inventory.Module.Action'
+        }
+        for idx, slot_widget in enumerate(self._action_slot_widgets):
+            item = action_by_slot.get(idx)
+            if item:
+                slot_widget.set_item(item['item_params'], item['item_name'])
+            else:
+                slot_widget.clear_item()
+
         ammo  = [i for i in items if self._mod_tag(i) == 'Inventory.Module.Ammo']
         quest = [i for i in items if self._mod_tag(i) == 'Inventory.Module.Quest']
-        self._fill_section(self._ammo_layout,  ammo)
-        self._fill_section(self._quest_layout, quest)
+        self._fill_icon_section(self._ammo_grid,  ammo)
+        self._fill_icon_section(self._quest_grid, quest)
 
     def clear_session(self) -> None:
         for s in self._eq_slot_widgets:
             s.clear_item()
-        self._fill_section(self._ammo_layout,  [])
-        self._fill_section(self._quest_layout, [])
+        for s in self._action_slot_widgets:
+            s.clear_item()
+        self._fill_icon_section(self._ammo_grid,  [])
+        self._fill_icon_section(self._quest_grid, [])
 
     @staticmethod
     def _mod_tag(item: ItemRecord) -> str:
@@ -728,30 +755,30 @@ class _LeftPanel(QFrame):
             return ''
 
     @staticmethod
-    def _fill_section(layout: QVBoxLayout, items: list[ItemRecord]) -> None:
-        while layout.count():
-            child = layout.takeAt(0)
+    def _fill_icon_section(grid: QGridLayout, items: list[ItemRecord], cols: int = 4) -> None:
+        while grid.count():
+            child = grid.takeAt(0)
             if child.widget():
-                child.widget().deleteLater()
+                child.widget().setParent(None)
         if not items:
-            lbl = QLabel("—")
-            lbl.setObjectName("muted")
-            layout.addWidget(lbl)
+            placeholder = QLabel("—")
+            placeholder.setObjectName("muted")
+            grid.addWidget(placeholder, 0, 0)
             return
-        for item in items:
-            cnt  = item['count']
-            text = f"×{cnt}  {item['item_name']}" if cnt > 1 else item['item_name']
-            lbl  = QLabel(text)
-            lbl.setStyleSheet("font-size: 10px;")
-            lbl.setWordWrap(True)
-            layout.addWidget(lbl)
+        for idx, inv_item in enumerate(items):
+            slot = _EquipmentSlot("?", size=44)
+            slot.set_item(inv_item['item_params'], inv_item['item_name'])
+            cnt = inv_item.get('count', 1)
+            if cnt > 1:
+                slot.setToolTip(f"{inv_item['item_name']} ×{cnt}")
+            grid.addWidget(slot, idx // cols, idx % cols)
 
     @staticmethod
     def _section(title: str, slots: list[str], cols: int = 3) -> QWidget:
         w = QWidget()
         vbox = QVBoxLayout(w)
         vbox.setContentsMargins(0, 0, 0, 0)
-        vbox.setSpacing(8)
+        vbox.setSpacing(2)
         hdr = QLabel(title)
         hdr.setObjectName("section-header")
         vbox.addWidget(hdr)
@@ -832,19 +859,17 @@ class _RightPanel(QFrame):
         w = QWidget()
         vbox = QVBoxLayout(w)
         vbox.setContentsMargins(0, 0, 0, 0)
-        vbox.setSpacing(10)
-        hdr = QLabel("DERIVED STATS")
+        vbox.setSpacing(6)
+        hdr = QLabel("CHARACTER")
         hdr.setObjectName("section-header")
         vbox.addWidget(hdr)
 
         self._derived_lbls: dict[str, QLabel] = {}
-        for section, rows in (
-            ("Character", [("Level", "—"), ("Total XP", "—")]),
-            ("Vitals (est.)", [("Max HP", "—"), ("Max Stamina", "—"), ("Temp HP", "—")]),
-            ("Combat (est.)", [("Melee Dmg", "—"), ("Range Dmg", "—"), ("Crit %", "—")]),
-            ("Defence (est.)", [("Phys Resist", "—"), ("All Resist", "—")]),
-        ):
-            vbox.addWidget(self._stat_group(section, rows, self._derived_lbls))
+        vbox.addWidget(self._stat_group(
+            "Progress",
+            [("Level", "—"), ("Total XP", "—")],
+            self._derived_lbls,
+        ))
         return w
 
     @staticmethod
@@ -874,29 +899,11 @@ class _RightPanel(QFrame):
             vbox.addLayout(row)
         return w
 
-    def update_derived(self, level: int, xp: int, stat_totals: dict[str, int]) -> None:
-        vit  = stat_totals.get('Vitality',  0)
-        end  = stat_totals.get('Endurance', 0)
-        str_ = stat_totals.get('Strength',  0)
-        agi  = stat_totals.get('Agility',   0)
-        pre  = stat_totals.get('Precision', 0)
-        mas  = stat_totals.get('Mastery',   0)
-
-        updates: dict[str, str] = {
-            'Level':       str(level),
-            'Total XP':    f'{xp:,}',
-            'Max HP':      f'~{100 + vit * 8}',
-            'Max Stamina': f'~{100 + end * 5}',
-            'Temp HP':     f'~{50 + mas * 2}',
-            'Melee Dmg':   f'~{10 + str_ * 2}',
-            'Range Dmg':   f'~{10 + agi + pre}',
-            'Crit %':      f'~{int(agi * 0.2 + pre * 0.3)}%',
-            'Phys Resist': f'~{int(vit * 0.3)}',
-            'All Resist':  f'~{int((vit + end) * 0.2)}',
-        }
-        for key, text in updates.items():
-            if key in self._derived_lbls:
-                self._derived_lbls[key].setText(text)
+    def update_derived(self, level: int, xp: int, _stat_totals: dict[str, int]) -> None:
+        if 'Level' in self._derived_lbls:
+            self._derived_lbls['Level'].setText(str(level))
+        if 'Total XP' in self._derived_lbls:
+            self._derived_lbls['Total XP'].setText(f'{xp:,}')
 
     def _build_stat_allocation(self) -> QWidget:
         w = QWidget()
