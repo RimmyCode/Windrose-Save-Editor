@@ -53,7 +53,12 @@ def get_all_items(doc: BSONDoc) -> list[ItemRecord]:
                         break
 
             params = item.get('ItemParams', '')
-            name   = params.split('/')[-1].split('.')[0] if '/' in params else params
+            raw_key = params.split('/')[-1].split('.')[0] if '/' in params else params
+            try:
+                from windrose_save_editor.save.item_db import get_display_name
+                name = get_display_name(params) or raw_key
+            except Exception:
+                name = raw_key
 
             items.append(ItemRecord(
                 path=f'Inventory.Modules.{mod_idx}.Slots.{slot_idx}',

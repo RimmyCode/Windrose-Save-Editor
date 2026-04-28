@@ -6,13 +6,11 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 
-_UI        = Path(__file__).parent.parent / "icons" / "R5" / "Content" / "UI"
+_CONTENT   = Path(__file__).parent.parent / "icons" / "R5" / "Content"
+_UI        = _CONTENT / "UI"
 _TREE      = _UI / "META" / "EntityProgression" / "TalentTree" / "Assets"
 _STAT      = _UI / "META" / "CharacterInfo" / "StatIcons"
-_ITEMS     = _UI / "Icons" / "Items"
-_SLOTS     = _ITEMS / "Slots"
-_ARMOR_DIR = _ITEMS / "Armor"
-_WEAPON_DIR = _ITEMS / "Weapon"
+_SLOTS     = _UI / "Icons" / "Items" / "Slots"
 
 # Talent DA key → icon file stem (for names that don't follow the direct pattern)
 _TALENT_OVERRIDES: dict[str, str] = {
@@ -20,9 +18,7 @@ _TALENT_OVERRIDES: dict[str, str] = {
     "DA_Talent_Toughguy_HealEffectiveness":           "T_Talent_Toughguy_HealEffectivness",
     "DA_Talent_Crusher_DamageResistWithTwoHandedWpn": "T_Talent_Crusher_DamageResistInAttack",
     "DA_Talent_Toughguy_MeleeDamageResist":           "T_Talent_Toughguy_PhysicalRangeDamageResist",
-    # Deep Impact — no matching file; use the armour-penetration icon (closest concept)
     "DA_Talent_Marksman_PierceDamage":                "T_Talent_Marksman_RangeArmorPenBonus",
-    # Both "Outnumbered" perks share the same display name; reuse the resist icon for the damage variant
     "DA_Talent_Toughguy_DamageForManyEnemies":        "T_Talent_Toughguy_ResistForManyEnemies",
 }
 
@@ -32,6 +28,12 @@ _SLOT_STATE_FILES: dict[str, str] = {
     "default":  "T_Slot_Default",
     "select":   "T_Slot_Select",
     "broken":   "T_Slot_Broken",
+}
+
+_SLOT_ICON_MAP: dict[str, str] = {
+    "Gloves":   "Hands",
+    "Feet":     "Boots",
+    "Belt":     "Backpack",
 }
 
 
@@ -50,11 +52,35 @@ def _px_scaled(path_str: str, size: int) -> QPixmap:
                      Qt.TransformationMode.SmoothTransformation)
 
 
+@lru_cache(maxsize=None)
+def _item_db_maps() -> tuple[dict[str, str], dict[str, str]]:
+    """Returns (icon_path_by_key, display_name_by_key). Built once from item DB."""
+    from windrose_save_editor.save.item_db import load_item_db
+    icon_map: dict[str, str] = {}
+    name_map: dict[str, str] = {}
+    for it in load_item_db():
+        params = it.get('item_params_path', '')
+        base   = params.split('/')[-1].split('.')[0] if params else ''
+        ir     = it.get('icon_ref', '')
+        name   = it.get('display_name', '')
+
+        if ir and ir.startswith('/Game/'):
+            path = str(_CONTENT / (ir[len('/Game/'):] + '.png'))
+            for key in filter(None, [params, base]):
+                icon_map.setdefault(key, path)
+
+        if name:
+            for key in filter(None, [params, base]):
+                name_map.setdefault(key, name)
+
+    return icon_map, name_map
+
+
 def talent_icon(da_key: str) -> QPixmap:
     """White-on-transparent talent art for a DA talent key."""
     stem = _TALENT_OVERRIDES.get(da_key)
     if stem is None:
-        stem = "T_" + da_key[3:]              # DA_Talent_X_Y → T_Talent_X_Y
+        stem = "T_" + da_key[3:]
     return _px(str(_TREE / "Talent_Icons" / f"{stem}.png"))
 
 
@@ -77,41 +103,21 @@ def stat_icon(stat_name: str, size: int = 18) -> QPixmap:
     return _px_scaled(str(_STAT / f"T_StatIcon_{stat_name}.png"), size)
 
 
-_SLOT_ICON_MAP: dict[str, str] = {
-    "Gloves":   "Hands",
-    "Feet":     "Boots",
-    "Belt":     "Backpack",
-}
-
-# DA item path → icon file stem mappings
-_ARMOR_SLOT_TO_SUFFIX: dict[str, str] = {
-    "Head":   "Hat",
-    "Torso":  "Torso",
-    "Legs":   "Legs",
-    "Hands":  "Hands",
-    "Gloves": "Hands",
-    "Feet":   "Feets",
-    "Boots":  "Feets",
-}
-_TIER_TOKENS = frozenset({"Base", "T01", "T02", "T03", "T04"})
-
-
 def item_icon(item_params: str, size: int = 52) -> QPixmap:
-    """Resolve a gameplay item icon from its DA asset path. Returns null QPixmap on miss."""
-    stem = item_params.split('/')[-1].split('.')[0]
-    if 'Armor' in stem:
-        parts = stem.replace('DA_EID_', '', 1).split('_')
-        if parts and parts[0] == 'Armor' and len(parts) >= 3:
-            slot_key = parts[-1]
-            suffix   = _ARMOR_SLOT_TO_SUFFIX.get(slot_key)
-            if suffix:
-                middle = [p for p in parts[1:-1] if p not in _TIER_TOKENS]
-                if middle:
-                    fname = f"T_ItemIcon_Armor_{'_'.join(middle)}_{suffix}.png"
-                    px    = _px_scaled(str(_ARMOR_DIR / fname), size)
-                    if not px.isNull():
-                        return px
+    """Resolve item icon via the item database. Returns null QPixmap on miss."""
+    icon_map, _ = _item_db_maps()
+    base = item_params.split('/')[-1].split('.')[0]
+    path = icon_map.get(item_params) or icon_map.get(base)
+    if path:
+        return _px_scaled(path, size)
     return QPixmap()
+
+
+def item_display_name(item_params: str) -> str:
+    """Return the human-readable display name for an item, or empty string."""
+    _, name_map = _item_db_maps()
+    base = item_params.split('/')[-1].split('.')[0]
+    return name_map.get(item_params) or name_map.get(base) or ''
 
 
 def slot_type_icon(slot_type: str, size: int = 40) -> QPixmap:

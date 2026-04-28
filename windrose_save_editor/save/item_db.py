@@ -12,29 +12,41 @@ Each item dict has (after normalisation):
     item_type         : str   e.g. "Inventory.ItemType.Armor.Torso"
     rarity            : str   "Common" | "Uncommon" | "Rare" | "Epic" | "Legendary" | ""
     max_level         : int | None
+    icon_ref          : str   game-relative icon path e.g. "/Game/UI/Icons/Items/Armor/T_ItemIcon_…"
 """
 
 import json
-import re
 import sys
 from pathlib import Path
 
 _CACHE: list[dict] | None = None
+_NAME_MAP: dict[str, str] | None = None
 
 
 def _find_db_path() -> Path | None:
     candidates = [
-        # Frozen exe: next to the executable
         Path(getattr(sys, '_MEIPASS', '')) / 'Item ID Database.html',
-        # Development: next to the running script / package root
         Path(__file__).resolve().parent.parent.parent / 'Item ID Database.html',
-        # Current working directory
         Path.cwd() / 'Item ID Database.html',
     ]
     for p in candidates:
         if p.exists():
             return p
     return None
+
+
+def _parse_items_html(html: str) -> list[dict]:
+    """Extract the ITEMS JS array from the HTML using json.JSONDecoder."""
+    marker = 'const ITEMS = ['
+    pos = html.find(marker)
+    if pos < 0:
+        return []
+    arr_pos = pos + len(marker) - 1  # points at '['
+    try:
+        data, _ = json.JSONDecoder().raw_decode(html, arr_pos)
+        return data if isinstance(data, list) else []
+    except (json.JSONDecodeError, ValueError):
+        return []
 
 
 def _normalise(raw: dict) -> dict:
@@ -61,6 +73,7 @@ def _normalise(raw: dict) -> dict:
         'item_type':        _str('item_type') or _str('itemType'),
         'rarity':           _str('rarity'),
         'max_level':        int(raw['max_level']) if raw.get('max_level') is not None else None,
+        'icon_ref':         str(raw.get('icon_ref') or ''),
     }
 
 
@@ -81,15 +94,7 @@ def load_item_db(path: Path | None = None, force_reload: bool = False) -> list[d
 
     try:
         html = db_path.read_text(encoding='utf-8', errors='replace')
-        # Match: const/let/var/window.ITEMS = [...]
-        m = re.search(
-            r'(?:const|let|var|window\.ITEMS)\s*=\s*(\[[\s\S]*?\]);',
-            html,
-        )
-        if not m:
-            _CACHE = []
-            return _CACHE
-        raw_list: list[dict] = json.loads(m.group(1))
+        raw_list = _parse_items_html(html)
         _CACHE = [_normalise(it) for it in raw_list if isinstance(it, dict)]
     except Exception:
         _CACHE = []
@@ -122,11 +127,6 @@ def build_db_indices(items: list[dict]) -> tuple[dict, dict, dict]:
 
 
 def _family_key(db_item: dict) -> str:
-    """Group rarity variants of the same item under a single key.
-
-    Uses the display_name (which should be identical across rarities).
-    Falls back to stripping rarity keywords from the asset basename.
-    """
     name = db_item.get('display_name', '').strip().lower()
     if name:
         return name
@@ -143,3 +143,25 @@ def find_db_item(inv_item: dict, by_param: dict, by_base: dict) -> dict | None:
         return by_param[params]
     base = params.split('/')[-1].split('.')[0]
     return by_base.get(base)
+
+
+def get_display_name(item_params: str) -> str:
+    """Return the human-readable display name for an item_params path.
+
+    Falls back to the basename (DA key stem) if the DB has no entry.
+    """
+    global _NAME_MAP
+    if _NAME_MAP is None:
+        _NAME_MAP = {}
+        for it in load_item_db():
+            params = it.get('item_params_path', '')
+            base   = params.split('/')[-1].split('.')[0] if params else ''
+            name   = it.get('display_name', '')
+            if name:
+                if params:
+                    _NAME_MAP.setdefault(params, name)
+                if base:
+                    _NAME_MAP.setdefault(base, name)
+
+    base = item_params.split('/')[-1].split('.')[0]
+    return _NAME_MAP.get(item_params) or _NAME_MAP.get(base) or ''

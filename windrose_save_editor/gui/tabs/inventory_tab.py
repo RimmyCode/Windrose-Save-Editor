@@ -164,10 +164,15 @@ class InventoryTab(QWidget):
         self._icon_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._icon_scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._icon_container = QWidget()
+        self._icon_container.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
         self._icon_grid = QGridLayout(self._icon_container)
         self._icon_grid.setContentsMargins(12, 8, 12, 8)
         self._icon_grid.setSpacing(8)
-        self._icon_grid.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self._icon_grid.setAlignment(Qt.AlignmentFlag.AlignTop)
+        # Phantom stretch column fills remaining horizontal space
+        self._icon_grid.setColumnStretch(_ICON_COLS, 1)
         self._icon_scroll.setWidget(self._icon_container)
         self._view_stack.addWidget(self._icon_scroll)  # index 1
 
