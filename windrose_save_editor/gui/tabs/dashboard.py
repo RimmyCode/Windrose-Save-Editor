@@ -85,7 +85,7 @@ class _HeroHeader(QWidget):
         row.addWidget(badge)
         row.addStretch()
 
-        sub = QLabel("Orange Dreamcicle theme by Reisu")
+        sub = QLabel("Corsair Ember theme by Reisu")
         sub.setObjectName("hero-sub")
 
         layout.addLayout(row)
