@@ -1003,7 +1003,7 @@ class _RightPanel(QFrame):
 class _CharacterEditorView(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        layout = QHBoxLayout(self)
+        layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
@@ -1011,9 +1011,69 @@ class _CharacterEditorView(QWidget):
         self._center = _CenterPanel()
         self._right  = _RightPanel()
 
+        self._zone_stack = QStackedWidget()
+        self._zone_stack.addWidget(self._build_overview_page())
+        self._zone_stack.addWidget(self._center.inventory_tab)
+        self._zone_stack.addWidget(self._center.skills_tab)
+        self._zone_stack.addWidget(self._right)
+        layout.addWidget(self._zone_stack, 1)
+
+    def _build_overview_page(self) -> QWidget:
+        page = QWidget()
+        layout = QHBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        overview = QFrame()
+        overview.setObjectName("workbench-panel")
+        overview_layout = QVBoxLayout(overview)
+        overview_layout.setContentsMargins(24, 22, 24, 22)
+        overview_layout.setSpacing(14)
+        overview_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        title = QLabel("Captain's Overview")
+        title.setObjectName("hero-title")
+        overview_layout.addWidget(title)
+
+        subtitle = QLabel(
+            "Use the map zones above to jump directly to Inventory, Skills, or Stats. "
+            "Save actions remain guarded in the top bar."
+        )
+        subtitle.setObjectName("muted")
+        subtitle.setWordWrap(True)
+        overview_layout.addWidget(subtitle)
+
+        for heading, body in (
+            ("Inventory", "Review items, set levels/counts, and run max-item helpers."),
+            ("Skills", "Inspect the talent map, set node levels, and max skill trees."),
+            ("Stats", "Edit core stat allocation and inspect derived estimates."),
+        ):
+            card = QFrame()
+            card.setObjectName("card")
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(16, 14, 16, 14)
+            card_layout.setSpacing(6)
+            h = QLabel(heading)
+            h.setObjectName("section-header")
+            b = QLabel(body)
+            b.setObjectName("muted")
+            b.setWordWrap(True)
+            card_layout.addWidget(h)
+            card_layout.addWidget(b)
+            overview_layout.addWidget(card)
+
         layout.addWidget(self._left)
-        layout.addWidget(self._center, 1)
-        layout.addWidget(self._right)
+        layout.addWidget(overview, 1)
+        return page
+
+    def switch_zone(self, key: str) -> None:
+        index = {
+            "editor": 0,
+            "inventory": 1,
+            "skills": 2,
+            "stats": 3,
+        }.get(key, 0)
+        self._zone_stack.setCurrentIndex(index)
 
     @property
     def left_panel(self) -> _LeftPanel:
@@ -1095,6 +1155,8 @@ class MainWindow(QMainWindow):
         self._topbar.set_active_tab("dashboard" if key == "dashboard" else "editor")
         self._map_table.set_active_zone(key)
         self._stack.setCurrentIndex(0 if key == "dashboard" else 1)
+        if key != "dashboard":
+            self._editor.switch_zone(key)
 
     # ── Open save ────────────────────────────────────────────────────────
 

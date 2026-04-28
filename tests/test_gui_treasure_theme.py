@@ -13,3 +13,10 @@ def test_treasure_map_workbench_selectors_exist() -> None:
     assert "QFrame#map-table" in sheet
     assert "QPushButton#map-zone" in sheet
     assert "QLabel#guard-badge" in sheet
+
+
+def test_main_window_exposes_workbench_zone_stack() -> None:
+    from windrose_save_editor.gui.main_window import _CharacterEditorView
+
+    assert hasattr(_CharacterEditorView, "switch_zone")
+    assert "_zone_stack" in _CharacterEditorView.__init__.__code__.co_names
