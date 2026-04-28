@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 # Colour palette — matches the professionally commissioned UI
+# Orange Dreamcicle theme by Reisu.
+THEME_DESCRIPTION = "Orange Dreamcicle theme by Reisu"
 C_BG         = "#100b08"   # main background
 C_PANEL      = "#1b100a"   # sidebar / panel surfaces
 C_PANEL2     = "#24160f"   # slightly lighter panel (center)

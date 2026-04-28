@@ -85,7 +85,7 @@ class _HeroHeader(QWidget):
         row.addWidget(badge)
         row.addStretch()
 
-        sub = QLabel("Community save editor for Windrose (Steam / Epic)")
+        sub = QLabel("Orange Dreamcicle theme by Reisu")
         sub.setObjectName("hero-sub")
 
         layout.addLayout(row)

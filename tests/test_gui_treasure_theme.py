@@ -2,6 +2,7 @@ from windrose_save_editor.gui import style
 
 
 def test_treasure_captain_palette_is_exposed() -> None:
+    assert style.THEME_DESCRIPTION == "Orange Dreamcicle theme by Reisu"
     assert style.C_BG == "#100b08"
     assert style.C_GOLD == "#e5c76f"
     assert style.C_RED == "#9e2f27"
