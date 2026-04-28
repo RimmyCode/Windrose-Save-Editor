@@ -15,7 +15,7 @@ from windrose_save_editor.gui.style import C_BORDER, C_GOLD, C_MUTED, C_PANEL2, 
 # The list is rendered under the Credits section; expand freely.
 CONTRIBUTORS: list[tuple[str, str]] = [
     ("Eratiosu", "X"),
-    ("Person A", "X"),
+    ("@reisu", "Stats, talents, and GUI"),
     ("Person B", "X"),
 ]
 
