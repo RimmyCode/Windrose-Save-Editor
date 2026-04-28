@@ -74,6 +74,14 @@ def stat_icon(stat_name: str, size: int = 18) -> QPixmap:
     return _px_scaled(str(_STAT / f"T_StatIcon_{stat_name}.png"), size)
 
 
+_SLOT_ICON_MAP: dict[str, str] = {
+    "Gloves":   "Hands",
+    "Feet":     "Boots",
+    "Belt":     "Backpack",
+}
+
+
 def slot_type_icon(slot_type: str, size: int = 40) -> QPixmap:
     """Equipment slot placeholder icon, e.g. 'Head', 'Torso', 'Ring'."""
-    return _px_scaled(str(_SLOTS / f"T_SlotTypeIcon_{slot_type}.png"), size)
+    name = _SLOT_ICON_MAP.get(slot_type, slot_type)
+    return _px_scaled(str(_SLOTS / f"T_SlotTypeIcon_{name}.png"), size)

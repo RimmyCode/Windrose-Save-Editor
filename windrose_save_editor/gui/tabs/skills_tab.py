@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QLabel, QPushButton, QSpinBox, QFrame,
     QGraphicsLineItem,
 )
+from PySide6.QtGui import QWheelEvent
 from PySide6.QtCore import Qt, QRectF, QPointF, Signal, QLineF
 from PySide6.QtGui import (
     QPainter, QPen, QBrush, QColor, QFont,
@@ -393,6 +394,39 @@ class SkillTreeScene(QGraphicsScene):
             node.update_level(0)
 
 
+# ── Zoomable / pannable view ──────────────────────────────────────────────────
+
+class _SkillTreeView(QGraphicsView):
+    """QGraphicsView with scroll-to-zoom and left-drag-to-pan on empty space."""
+
+    _ZOOM_IN  = 1.15
+    _ZOOM_OUT = 1.0 / 1.15
+    _ZOOM_MIN = 0.25
+    _ZOOM_MAX = 4.0
+
+    def __init__(self, scene: QGraphicsScene) -> None:
+        super().__init__(scene)
+        self.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._zoom_level: float = 1.0
+
+    def wheelEvent(self, event: QWheelEvent) -> None:
+        factor = self._ZOOM_IN if event.angleDelta().y() > 0 else self._ZOOM_OUT
+        new_zoom = self._zoom_level * factor
+        if self._ZOOM_MIN <= new_zoom <= self._ZOOM_MAX:
+            self._zoom_level = new_zoom
+            self.scale(factor, factor)
+
+    def fit(self) -> None:
+        self.fitInView(self.scene().sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+        self._zoom_level = self.transform().m11()
+
+
 # ── Skills tab ────────────────────────────────────────────────────────────────
 
 class SkillsTab(QWidget):
@@ -419,18 +453,9 @@ class SkillsTab(QWidget):
         self._scene = SkillTreeScene()
         self._scene.node_clicked.connect(self._on_node_clicked)
 
-        view = QGraphicsView(self._scene)
-        view.setRenderHint(QPainter.RenderHint.Antialiasing)
-        view.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        view.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
-        view.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
-        view.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
-        view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        view.fitInView(self._scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
-        self._view = view
+        self._view = _SkillTreeView(self._scene)
 
-        layout.addWidget(view, 1)
+        layout.addWidget(self._view, 1)
         layout.addWidget(self._build_detail_panel())
 
     def _build_detail_panel(self) -> QFrame:
@@ -571,10 +596,7 @@ class SkillsTab(QWidget):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        self._view.fitInView(
-            self._scene.sceneRect(),
-            Qt.AspectRatioMode.KeepAspectRatio,
-        )
+        self._view.fit()
 
     # ── Public API ────────────────────────────────────────────────────────
 

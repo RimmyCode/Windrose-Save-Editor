@@ -37,8 +37,8 @@ _STAT_COLORS: dict[str, str] = {
     "Endurance": "#16a085",
 }
 _ARMOR_SLOTS  = ["Head", "Torso", "Gloves", "Legs", "Feet"]
-_ACC_SLOTS    = ["Ring", "Necklace", "Belt"]
-_WEAPON_SLOTS = ["MainHand", "OffHand", "RangedMainHand", "RangedOffHand"]
+_ACC_SLOTS    = ["Ring", "Necklace", "Backpack"]
+_MODULE_SLOTS = ["MainHand", "OffHand", "RangedMainHand", "RangedOffHand"]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -578,7 +578,7 @@ class _LeftPanel(QFrame):
         layout.setSpacing(16)
         layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-        layout.addWidget(self._section("WEAPON LOADOUT", _WEAPON_SLOTS, cols=2))
+        layout.addWidget(self._section("MODULES", _MODULE_SLOTS, cols=2))
         layout.addWidget(self._section("ARMOR",          _ARMOR_SLOTS,  cols=3))
         layout.addWidget(self._section("ACCESSORIES",    _ACC_SLOTS,    cols=3))
 

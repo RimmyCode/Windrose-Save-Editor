@@ -80,11 +80,19 @@ def scan_sst_for_player(save_dir: Path) -> tuple[bytes, bytes] | None:
     for _d in filter(None, [_bundle_dir, _exe_dir]):
         _bundle_candidates += [_d / "rocksdb.dll", _d / "librocksdb.so"]
 
+    # Also search the package root and the project/repo root (dev workflow)
+    _pkg_root = script_dir.parent          # windrose_save_editor/
+    _repo_root = script_dir.parent.parent  # project repo root
+
     candidates: list[Path] = game_lib_locations + _bundle_candidates + [
         script_dir / "rocksdb.dll",
         script_dir / "librocksdb.dll",
         script_dir / "librocksdb.so",
         script_dir / "librocksdb.so.8",
+        _pkg_root / "rocksdb.dll",
+        _pkg_root / "librocksdb.so",
+        _repo_root / "rocksdb.dll",
+        _repo_root / "librocksdb.so",
         Path("rocksdb.dll"),
         Path("librocksdb.dll"),
         Path("librocksdb.so"),
