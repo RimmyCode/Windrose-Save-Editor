@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QGridLayout,
     QPushButton, QStackedWidget, QFrame, QLabel, QScrollArea,
     QSpinBox, QDialog, QListWidget, QListWidgetItem, QMessageBox,
-    QProgressDialog, QSizePolicy, QAbstractItemView,
+    QProgressDialog, QSizePolicy, QAbstractItemView, QSplitter,
 )
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QFont
@@ -26,6 +26,7 @@ from windrose_save_editor.gui.save_loader import (
 from windrose_save_editor.gui.tabs.dashboard import DashboardTab
 from windrose_save_editor.gui.tabs.skills_tab import SkillsTab
 from windrose_save_editor.gui.tabs.inventory_tab import InventoryTab
+from windrose_save_editor.inventory.reader import ItemRecord
 
 _STAT_ORDER = ["Strength", "Agility", "Precision", "Mastery", "Vitality", "Endurance"]
 _STAT_COLORS: dict[str, str] = {
@@ -36,7 +37,8 @@ _STAT_COLORS: dict[str, str] = {
     "Vitality":  "#e74c3c",
     "Endurance": "#16a085",
 }
-_ARMOR_SLOTS  = ["Head", "Torso", "Gloves", "Legs", "Feet"]
+# Armor slot names in save-file order (slot 0-4 in Module.Equipment)
+_ARMOR_SLOTS  = ["Head", "Torso", "Legs", "Gloves", "Feet"]
 _ACC_SLOTS    = ["Ring", "Necklace", "Backpack"]
 _MODULE_SLOTS = ["MainHand", "OffHand", "RangedMainHand", "RangedOffHand"]
 
@@ -408,21 +410,11 @@ class _TopBar(QFrame):
         self._lvl_badge.setObjectName("lvl-badge")
         char_row.addWidget(self._char_name_lbl)
         char_row.addWidget(self._lvl_badge)
-        char_row.addSpacing(14)
+        char_row.addSpacing(8)
 
-        self._stat_value_lbls: dict[str, QLabel] = {}
-        for stat in _STAT_ORDER:
-            pm = icons.stat_icon(stat, 16)
-            if not pm.isNull():
-                ic = QLabel()
-                ic.setPixmap(pm)
-                char_row.addWidget(ic)
-            val_lbl = QLabel("—")
-            val_lbl.setObjectName("stat-value")
-            val_lbl.setToolTip(stat)
-            self._stat_value_lbls[stat] = val_lbl
-            char_row.addWidget(val_lbl)
-            char_row.addSpacing(2)
+        self._xp_lbl = QLabel("")
+        self._xp_lbl.setStyleSheet(f"color: {C_MUTED}; font-size: 11px;")
+        char_row.addWidget(self._xp_lbl)
 
         self._char_info.hide()
         layout.addWidget(self._char_info)
@@ -474,15 +466,11 @@ class _TopBar(QFrame):
             btn.style().unpolish(btn)
             btn.style().polish(btn)
 
-    def set_character(self, name: str, stat_totals: dict[str, int]) -> None:
+    def set_character(self, name: str, level: int, xp: int) -> None:
         self._char_name_lbl.setText(name)
-        total_pts = sum(stat_totals.values())
-        self._lvl_badge.setText(f"{total_pts} pts")
-        for stat, val in stat_totals.items():
-            if stat in self._stat_value_lbls:
-                self._stat_value_lbls[stat].setText(str(val))
+        self._lvl_badge.setText(f"LVL {level}")
+        self._xp_lbl.setText(f"{xp:,} XP")
         self._char_info.show()
-        # Swap zones
         self._no_save_zone.hide()
         self._action_zone.show()
 
@@ -526,20 +514,36 @@ class _EquipmentSlot(QFrame):
         self.setObjectName("card")
         self.setFixedSize(size, size)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setToolTip(slot_type)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(2, 2, 2, 2)
-        pm = icons.slot_type_icon(slot_type, size - 6)
+        self._slot_type = slot_type
+        self._icon_size = size - 6
+        vbox = QVBoxLayout(self)
+        vbox.setContentsMargins(2, 2, 2, 2)
+        self._icon_lbl = QLabel()
+        self._icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        vbox.addWidget(self._icon_lbl)
+        self._reset_to_placeholder()
+
+    def _reset_to_placeholder(self) -> None:
+        pm = icons.slot_type_icon(self._slot_type, self._icon_size)
         if not pm.isNull():
-            lbl = QLabel()
-            lbl.setPixmap(pm)
-            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            layout.addWidget(lbl)
+            self._icon_lbl.setPixmap(pm)
+            self._icon_lbl.setText("")
         else:
-            lbl = QLabel(slot_type[:2].upper())
-            lbl.setStyleSheet(f"color: {C_MUTED}; font-size: 9px;")
-            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            layout.addWidget(lbl)
+            self._icon_lbl.setText(self._slot_type[:2].upper())
+            self._icon_lbl.setStyleSheet(f"color: {C_MUTED}; font-size: 9px;")
+        self.setToolTip(self._slot_type)
+
+    def set_item(self, item_params: str, item_name: str) -> None:
+        pm = icons.item_icon(item_params, self._icon_size)
+        if not pm.isNull():
+            self._icon_lbl.setPixmap(pm)
+            self._icon_lbl.setText("")
+        else:
+            self._reset_to_placeholder()
+        self.setToolTip(item_name or self._slot_type)
+
+    def clear_item(self) -> None:
+        self._reset_to_placeholder()
 
 
 class _LeftPanel(QFrame):
@@ -552,6 +556,7 @@ class _LeftPanel(QFrame):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
+        # ── Tab bar
         tab_bar = QFrame()
         tab_bar.setStyleSheet(
             f"QFrame {{ background: transparent; border-bottom: 1px solid {C_BORDER}; }}"
@@ -559,14 +564,35 @@ class _LeftPanel(QFrame):
         tab_row = QHBoxLayout(tab_bar)
         tab_row.setContentsMargins(0, 0, 0, 0)
         tab_row.setSpacing(0)
+        self._tab_btns: list[QPushButton] = []
         for label, active in (("CHARACTER", True), ("SHIP", False)):
             btn = QPushButton(label)
             btn.setObjectName("tab-btn")
             btn.setProperty("active", "true" if active else "false")
             btn.setFixedHeight(38)
+            self._tab_btns.append(btn)
             tab_row.addWidget(btn)
         outer.addWidget(tab_bar)
 
+        # ── Stacked pages
+        self._stack = QStackedWidget()
+        self._stack.addWidget(self._build_character_page())   # index 0
+        self._stack.addWidget(self._build_ship_page())        # index 1
+        outer.addWidget(self._stack, 1)
+
+        self._tab_btns[0].clicked.connect(lambda: self._switch(0))
+        self._tab_btns[1].clicked.connect(lambda: self._switch(1))
+
+    def _switch(self, idx: int) -> None:
+        self._stack.setCurrentIndex(idx)
+        for i, btn in enumerate(self._tab_btns):
+            btn.setProperty("active", "true" if i == idx else "false")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+
+    # ── Character page ────────────────────────────────────────────────────
+
+    def _build_character_page(self) -> QWidget:
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -578,12 +604,147 @@ class _LeftPanel(QFrame):
         layout.setSpacing(16)
         layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-        layout.addWidget(self._section("MODULES", _MODULE_SLOTS, cols=2))
-        layout.addWidget(self._section("ARMOR",          _ARMOR_SLOTS,  cols=3))
-        layout.addWidget(self._section("ACCESSORIES",    _ACC_SLOTS,    cols=3))
+        layout.addWidget(self._section("MODULES",     _MODULE_SLOTS, cols=2))
+        layout.addWidget(self._build_armor_section())
+        layout.addWidget(self._section("ACCESSORIES", _ACC_SLOTS,    cols=3))
+
+        ammo_w, self._ammo_layout = self._make_items_section("AMMO")
+        quest_w, self._quest_layout = self._make_items_section("QUEST ITEMS")
+        layout.addWidget(ammo_w)
+        layout.addWidget(quest_w)
 
         scroll.setWidget(content)
-        outer.addWidget(scroll, 1)
+        return scroll
+
+    def _build_armor_section(self) -> QWidget:
+        w = QWidget()
+        vbox = QVBoxLayout(w)
+        vbox.setContentsMargins(0, 0, 0, 0)
+        vbox.setSpacing(8)
+        hdr = QLabel("ARMOR")
+        hdr.setObjectName("section-header")
+        vbox.addWidget(hdr)
+        grid = QGridLayout()
+        grid.setSpacing(6)
+        self._eq_slot_widgets: list[_EquipmentSlot] = []
+        for i, slot_type in enumerate(_ARMOR_SLOTS):
+            s = _EquipmentSlot(slot_type)
+            self._eq_slot_widgets.append(s)
+            grid.addWidget(s, i // 3, i % 3)
+        vbox.addLayout(grid)
+        return w
+
+    @staticmethod
+    def _make_items_section(title: str) -> tuple[QWidget, QVBoxLayout]:
+        w = QWidget()
+        vbox = QVBoxLayout(w)
+        vbox.setContentsMargins(0, 0, 0, 0)
+        vbox.setSpacing(4)
+        hdr = QLabel(title)
+        hdr.setObjectName("section-header")
+        vbox.addWidget(hdr)
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(2)
+        placeholder = QLabel("—")
+        placeholder.setObjectName("muted")
+        content_layout.addWidget(placeholder)
+        vbox.addWidget(content)
+        return w, content_layout
+
+    # ── Ship page (placeholder) ───────────────────────────────────────────
+
+    def _build_ship_page(self) -> QWidget:
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(12, 32, 12, 12)
+        layout.setSpacing(12)
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
+
+        anchor = QLabel("⚓")
+        anchor.setStyleSheet(f"color: {C_GOLD}; font-size: 32px;")
+        anchor.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(anchor)
+
+        title = QLabel("Ship editing\ncoming soon")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setStyleSheet(
+            f"color: {C_TEXT}; font-size: 12px; font-weight: bold;"
+        )
+        layout.addWidget(title)
+
+        sub = QLabel(
+            "Ship stats, cannons, hull,\n"
+            "cargo hold, and customization\n"
+            "will be available here."
+        )
+        sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        sub.setWordWrap(True)
+        sub.setStyleSheet(f"color: {C_MUTED}; font-size: 10px;")
+        layout.addWidget(sub)
+
+        scroll.setWidget(content)
+        return scroll
+
+    # ── Session data ──────────────────────────────────────────────────────
+
+    def load_session(self, session) -> None:
+        from windrose_save_editor.inventory.reader import get_all_items
+        items = get_all_items(session.doc)
+
+        eq_by_slot = {
+            i['slot']: i for i in items
+            if self._mod_tag(i) == 'Inventory.Module.Equipment'
+        }
+        for idx, slot_widget in enumerate(self._eq_slot_widgets):
+            item = eq_by_slot.get(idx)
+            if item:
+                slot_widget.set_item(item['item_params'], item['item_name'])
+            else:
+                slot_widget.clear_item()
+
+        ammo  = [i for i in items if self._mod_tag(i) == 'Inventory.Module.Ammo']
+        quest = [i for i in items if self._mod_tag(i) == 'Inventory.Module.Quest']
+        self._fill_section(self._ammo_layout,  ammo)
+        self._fill_section(self._quest_layout, quest)
+
+    def clear_session(self) -> None:
+        for s in self._eq_slot_widgets:
+            s.clear_item()
+        self._fill_section(self._ammo_layout,  [])
+        self._fill_section(self._quest_layout, [])
+
+    @staticmethod
+    def _mod_tag(item: ItemRecord) -> str:
+        try:
+            return item['mod_ref']['ModuleParams']['ModuleTag']['TagName']
+        except (KeyError, TypeError):
+            return ''
+
+    @staticmethod
+    def _fill_section(layout: QVBoxLayout, items: list[ItemRecord]) -> None:
+        while layout.count():
+            child = layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+        if not items:
+            lbl = QLabel("—")
+            lbl.setObjectName("muted")
+            layout.addWidget(lbl)
+            return
+        for item in items:
+            cnt  = item['count']
+            text = f"×{cnt}  {item['item_name']}" if cnt > 1 else item['item_name']
+            lbl  = QLabel(text)
+            lbl.setStyleSheet("font-size: 10px;")
+            lbl.setWordWrap(True)
+            layout.addWidget(lbl)
 
     @staticmethod
     def _section(title: str, slots: list[str], cols: int = 3) -> QWidget:
@@ -675,16 +836,23 @@ class _RightPanel(QFrame):
         hdr = QLabel("DERIVED STATS")
         hdr.setObjectName("section-header")
         vbox.addWidget(hdr)
+
+        self._derived_lbls: dict[str, QLabel] = {}
         for section, rows in (
-            ("Vitals",  [("Max HP", "—"), ("Max Stamina", "—"), ("Temp HP", "—")]),
-            ("Combat",  [("Melee Dmg", "—"), ("Range Dmg", "—"), ("Crit %", "—")]),
-            ("Defence", [("Phys Resist", "—"), ("All Resist", "—")]),
+            ("Character", [("Level", "—"), ("Total XP", "—")]),
+            ("Vitals (est.)", [("Max HP", "—"), ("Max Stamina", "—"), ("Temp HP", "—")]),
+            ("Combat (est.)", [("Melee Dmg", "—"), ("Range Dmg", "—"), ("Crit %", "—")]),
+            ("Defence (est.)", [("Phys Resist", "—"), ("All Resist", "—")]),
         ):
-            vbox.addWidget(self._stat_group(section, rows))
+            vbox.addWidget(self._stat_group(section, rows, self._derived_lbls))
         return w
 
     @staticmethod
-    def _stat_group(title: str, rows: list[tuple[str, str]]) -> QWidget:
+    def _stat_group(
+        title: str,
+        rows: list[tuple[str, str]],
+        store: dict[str, QLabel] | None = None,
+    ) -> QWidget:
         w = QWidget()
         vbox = QVBoxLayout(w)
         vbox.setContentsMargins(0, 0, 0, 4)
@@ -698,11 +866,37 @@ class _RightPanel(QFrame):
             lbl.setObjectName("muted")
             val = QLabel(value)
             val.setObjectName("stat-value")
+            if store is not None:
+                store[label] = val
             row.addWidget(lbl)
             row.addStretch()
             row.addWidget(val)
             vbox.addLayout(row)
         return w
+
+    def update_derived(self, level: int, xp: int, stat_totals: dict[str, int]) -> None:
+        vit  = stat_totals.get('Vitality',  0)
+        end  = stat_totals.get('Endurance', 0)
+        str_ = stat_totals.get('Strength',  0)
+        agi  = stat_totals.get('Agility',   0)
+        pre  = stat_totals.get('Precision', 0)
+        mas  = stat_totals.get('Mastery',   0)
+
+        updates: dict[str, str] = {
+            'Level':       str(level),
+            'Total XP':    f'{xp:,}',
+            'Max HP':      f'~{100 + vit * 8}',
+            'Max Stamina': f'~{100 + end * 5}',
+            'Temp HP':     f'~{50 + mas * 2}',
+            'Melee Dmg':   f'~{10 + str_ * 2}',
+            'Range Dmg':   f'~{10 + agi + pre}',
+            'Crit %':      f'~{int(agi * 0.2 + pre * 0.3)}%',
+            'Phys Resist': f'~{int(vit * 0.3)}',
+            'All Resist':  f'~{int((vit + end) * 0.2)}',
+        }
+        for key, text in updates.items():
+            if key in self._derived_lbls:
+                self._derived_lbls[key].setText(text)
 
     def _build_stat_allocation(self) -> QWidget:
         w = QWidget()
@@ -768,6 +962,10 @@ class _CharacterEditorView(QWidget):
         layout.addWidget(self._left)
         layout.addWidget(self._center, 1)
         layout.addWidget(self._right)
+
+    @property
+    def left_panel(self) -> _LeftPanel:
+        return self._left
 
     @property
     def skills_tab(self) -> SkillsTab:
@@ -879,12 +1077,17 @@ class MainWindow(QMainWindow):
         stats   = get_stats(session.doc)
         skills  = get_skills(session.doc)
 
+        prog        = session.doc.get('PlayerMetadata', {}).get('PlayerProgression', {})
+        level       = int(prog.get('RewardLevel', 0))
+        xp          = int(prog.get('TotalExp', 0))
         stat_totals = {e.name: e.level for e in stats}
-        self._topbar.set_character(loaded.player_name, stat_totals)
 
+        self._topbar.set_character(loaded.player_name, level, xp)
+        self._editor.left_panel.load_session(session)
         self._editor.skills_tab.set_session(session)
         self._editor.skills_tab.load_skills(skills)
         self._editor.right_panel.update_stats(stats)
+        self._editor.right_panel.update_derived(level, xp, stat_totals)
         self._editor.inventory_tab.load_items(session)
 
         self._switch_page("editor")
@@ -985,15 +1188,18 @@ class MainWindow(QMainWindow):
         if self._loaded:
             from windrose_save_editor.editors.stats import get_stats
             from windrose_save_editor.editors.skills import get_skills
-            stats  = get_stats(self._loaded.session.doc)
-            skills = get_skills(self._loaded.session.doc)
+            stats       = get_stats(self._loaded.session.doc)
+            skills      = get_skills(self._loaded.session.doc)
+            stat_totals = {e.name: e.level for e in stats}
+            prog        = self._loaded.session.doc.get('PlayerMetadata', {}).get('PlayerProgression', {})
+            level       = int(prog.get('RewardLevel', 0))
+            xp          = int(prog.get('TotalExp', 0))
             self._editor.right_panel.update_stats(stats)
+            self._editor.right_panel.update_derived(level, xp, stat_totals)
             self._editor.skills_tab.load_skills(skills)
             self._editor.inventory_tab.reload()
-            self._topbar.set_character(
-                self._loaded.player_name,
-                {e.name: e.level for e in stats},
-            )
+            self._editor.left_panel.load_session(self._loaded.session)
+            self._topbar.set_character(self._loaded.player_name, level, xp)
         self._update_status()
 
     # ── Change handlers ───────────────────────────────────────────────────
@@ -1004,11 +1210,13 @@ class MainWindow(QMainWindow):
         from windrose_save_editor.editors.stats import get_stats, set_stat_level
         set_stat_level(self._loaded.session.doc, node_key, new_level)
         self._loaded.session.modified = True
-        stats = get_stats(self._loaded.session.doc)
-        self._topbar.set_character(
-            self._loaded.player_name,
-            {e.name: e.level for e in stats},
-        )
+        stats       = get_stats(self._loaded.session.doc)
+        stat_totals = {e.name: e.level for e in stats}
+        prog        = self._loaded.session.doc.get('PlayerMetadata', {}).get('PlayerProgression', {})
+        level       = int(prog.get('RewardLevel', 0))
+        xp          = int(prog.get('TotalExp', 0))
+        self._topbar.set_character(self._loaded.player_name, level, xp)
+        self._editor.right_panel.update_derived(level, xp, stat_totals)
         stat_name = next(
             (e.name for e in stats if e.node_key == node_key), node_key
         )

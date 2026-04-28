@@ -10,3 +10,5 @@ __pycache__/
 
 # OMC state
 .omc/
+/windrose_save_editor/save dumps for reference
+/windrose_save_editor/.data

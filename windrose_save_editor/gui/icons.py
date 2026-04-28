@@ -6,10 +6,13 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 
-_UI = Path(__file__).parent.parent / "icons" / "R5" / "Content" / "UI"
-_TREE = _UI / "META" / "EntityProgression" / "TalentTree" / "Assets"
-_STAT = _UI / "META" / "CharacterInfo" / "StatIcons"
-_SLOTS = _UI / "Icons" / "Items" / "Slots"
+_UI        = Path(__file__).parent.parent / "icons" / "R5" / "Content" / "UI"
+_TREE      = _UI / "META" / "EntityProgression" / "TalentTree" / "Assets"
+_STAT      = _UI / "META" / "CharacterInfo" / "StatIcons"
+_ITEMS     = _UI / "Icons" / "Items"
+_SLOTS     = _ITEMS / "Slots"
+_ARMOR_DIR = _ITEMS / "Armor"
+_WEAPON_DIR = _ITEMS / "Weapon"
 
 # Talent DA key → icon file stem (for names that don't follow the direct pattern)
 _TALENT_OVERRIDES: dict[str, str] = {
@@ -79,6 +82,36 @@ _SLOT_ICON_MAP: dict[str, str] = {
     "Feet":     "Boots",
     "Belt":     "Backpack",
 }
+
+# DA item path → icon file stem mappings
+_ARMOR_SLOT_TO_SUFFIX: dict[str, str] = {
+    "Head":   "Hat",
+    "Torso":  "Torso",
+    "Legs":   "Legs",
+    "Hands":  "Hands",
+    "Gloves": "Hands",
+    "Feet":   "Feets",
+    "Boots":  "Feets",
+}
+_TIER_TOKENS = frozenset({"Base", "T01", "T02", "T03", "T04"})
+
+
+def item_icon(item_params: str, size: int = 52) -> QPixmap:
+    """Resolve a gameplay item icon from its DA asset path. Returns null QPixmap on miss."""
+    stem = item_params.split('/')[-1].split('.')[0]
+    if 'Armor' in stem:
+        parts = stem.replace('DA_EID_', '', 1).split('_')
+        if parts and parts[0] == 'Armor' and len(parts) >= 3:
+            slot_key = parts[-1]
+            suffix   = _ARMOR_SLOT_TO_SUFFIX.get(slot_key)
+            if suffix:
+                middle = [p for p in parts[1:-1] if p not in _TIER_TOKENS]
+                if middle:
+                    fname = f"T_ItemIcon_Armor_{'_'.join(middle)}_{suffix}.png"
+                    px    = _px_scaled(str(_ARMOR_DIR / fname), size)
+                    if not px.isNull():
+                        return px
+    return QPixmap()
 
 
 def slot_type_icon(slot_type: str, size: int = 40) -> QPixmap:

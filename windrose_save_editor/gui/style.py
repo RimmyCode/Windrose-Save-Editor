@@ -96,6 +96,8 @@ QLabel#stat-value {{ color: {C_TEXT}; font-size: 12px; }}
 QLabel#stat-value-hi {{ color: {C_GOLD}; font-size: 12px; font-weight: bold; }}
 QLabel#muted {{ color: {C_MUTED}; font-size: 11px; }}
 QLabel#version {{ color: #2a3240; font-size: 10px; }}
+QLabel#layout-btn {{ color: {C_MUTED}; font-size: 10px; text-decoration: underline; padding: 0 3px; }}
+QLabel#layout-btn[active="true"] {{ color: {C_TEXT}; }}
 
 /* ── Inputs ──────────────────────────────────────────────────────── */
 QSpinBox, QLineEdit {{
@@ -104,9 +106,23 @@ QSpinBox, QLineEdit {{
 }}
 QSpinBox:focus, QLineEdit:focus {{ border-color: {C_GOLD}; }}
 QSpinBox::up-button, QSpinBox::down-button {{
-    background: {C_BORDER2}; border: none; width: 14px;
+    background: {C_BORDER2}; border: none; width: 18px; border-radius: 2px;
 }}
+QSpinBox::up-button   {{ subcontrol-position: top right; }}
+QSpinBox::down-button {{ subcontrol-position: bottom right; }}
 QSpinBox::up-button:hover, QSpinBox::down-button:hover {{ background: #3a4555; }}
+QSpinBox::up-arrow {{
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-bottom: 5px solid {C_TEXT};
+    width: 0; height: 0;
+}}
+QSpinBox::down-arrow {{
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid {C_TEXT};
+    width: 0; height: 0;
+}}
 
 /* ── Progress bar ────────────────────────────────────────────────── */
 QProgressBar {{
